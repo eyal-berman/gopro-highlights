@@ -45,6 +45,12 @@ struct ContentView: View {
                 }
             }
         }
+        .onAppear {
+            viewModel.settings = settingsViewModel.settings
+        }
+        .onChange(of: settingsViewModel.settings) {
+            viewModel.settings = settingsViewModel.settings
+        }
         .alert("Error", isPresented: $viewModel.showError) {
             Button("OK") {
                 viewModel.showError = false
@@ -277,6 +283,7 @@ struct SettingsTabView: View {
         }
         .onChange(of: settingsViewModel.settings) {
             settingsViewModel.saveSettings()
+            mainViewModel.settings = settingsViewModel.settings
         }
     }
 }

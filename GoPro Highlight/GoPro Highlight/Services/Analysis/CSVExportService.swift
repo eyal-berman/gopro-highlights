@@ -11,7 +11,7 @@ import Foundation
 actor CSVExportService {
 
     /// Generates a comprehensive CSV report for all videos
-    func generateReport(videos: [GoProVideo], includeP isteInfo: Bool = true) async throws -> URL {
+    func generateReport(videos: [GoProVideo], includePisteInfo: Bool = true) async throws -> URL {
         var csvContent = buildCSVHeader(includePisteInfo: includePisteInfo)
 
         for video in videos {
@@ -21,10 +21,12 @@ actor CSVExportService {
 
         // Create temporary file
         let tempDir = FileManager.default.temporaryDirectory
-        let filename = "GoPro_Analysis_\(dateFormatter.string(from: Date())).csv"
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd_HHmmss"
+        let filename = "GoPro_Analysis_\(formatter.string(from: Date())).csv"
         let fileURL = tempDir.appendingPathComponent(filename)
 
-        try csvContent.write(to: fileURL, atomically: true, encoding: .utf8)
+        try csvContent.write(to: fileURL, atomically: true, encoding: String.Encoding.utf8)
 
         return fileURL
     }
@@ -77,11 +79,15 @@ actor CSVExportService {
         let fileSizeMB = Double(video.fileSize) / (1024 * 1024)
         values.append(String(format: "%.1f", fileSizeMB))
 
-        // Piste info (placeholder for Phase 7)
+        // Piste info
         if includePisteInfo {
-            // TODO: Phase 7 - Add actual piste identification
-            values.append("Unknown")
-            values.append("Unknown")
+            if let piste = video.pisteInfo {
+                values.append(escapeCSVField(piste.name))
+                values.append(escapeCSVField(piste.resort ?? "N/A"))
+            } else {
+                values.append("N/A")
+                values.append("N/A")
+            }
         }
 
         return values.joined(separator: ",")
@@ -104,10 +110,4 @@ actor CSVExportService {
         return String(format: "%02d:%02d:%02d", hours, minutes, secs)
     }
 
-    /// Date formatter for filenames
-    private var dateFormatter: DateFormatter {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd_HHmmss"
-        return formatter
-    }
 }

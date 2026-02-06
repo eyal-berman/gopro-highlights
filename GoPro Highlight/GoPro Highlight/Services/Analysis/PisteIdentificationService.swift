@@ -19,7 +19,7 @@ actor PisteIdentificationService {
     }
 
     private let osmService = OpenStreetMapService()
-    private var pisteCache: [String: [PisteData]] = [:]
+    private var pisteCache: [String: [OpenStreetMapService.PisteData]] = [:]
 
     /// Identifies which ski piste a video was recorded on based on GPS telemetry
     func identifyPiste(from telemetry: Telemetry) async throws -> PisteInfo? {
@@ -27,9 +27,8 @@ actor PisteIdentificationService {
             return nil
         }
 
-        // Calculate center point and bounding box
+        // Calculate center point
         let centerPoint = calculateCenterPoint(from: telemetry.gpsPoints)
-        let boundingBox = calculateBoundingBox(from: telemetry.gpsPoints)
 
         // Query nearby pistes from OpenStreetMap
         let pistes = try await osmService.queryNearbyPistes(

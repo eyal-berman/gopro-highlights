@@ -9,16 +9,17 @@ import Foundation
 import AVFoundation
 
 /// Represents a GoPro video file with its metadata and processing status
-struct GoProVideo: Identifiable, Codable {
+struct GoProVideo: Identifiable, Codable, Sendable {
     let id: UUID
     let url: URL
     let filename: String
-    let duration: TimeInterval
-    let fileSize: Int64
+    var duration: TimeInterval
+    var fileSize: Int64
 
     var telemetry: Telemetry?
     var speedStats: SpeedStatistics?
     var highlights: [Highlight]
+    var pisteInfo: PisteInfoData?
 
     var processingStatus: ProcessingStatus
 
@@ -34,7 +35,7 @@ struct GoProVideo: Identifiable, Codable {
 }
 
 // MARK: - Processing Status
-enum ProcessingStatus: Codable {
+enum ProcessingStatus: Codable, Sendable {
     case pending
     case parsing
     case analyzing
@@ -55,12 +56,12 @@ enum ProcessingStatus: Codable {
 }
 
 // MARK: - Telemetry Data (placeholder for Phase 2)
-struct Telemetry: Codable {
+struct Telemetry: Codable, Sendable {
     let gpsPoints: [GPSPoint]
     let speedSamples: [SpeedSample]
     let timestamps: [TimeInterval]
 
-    struct GPSPoint: Codable {
+    struct GPSPoint: Codable, Sendable {
         let latitude: Double
         let longitude: Double
         let altitude: Double
@@ -68,24 +69,24 @@ struct Telemetry: Codable {
         let accuracy: Double?
     }
 
-    struct SpeedSample: Codable {
-        let speed: Double  // m/s from GPMF
+    struct SpeedSample: Codable, Sendable {
+        var speed: Double  // m/s from GPMF
         let timestamp: TimeInterval
         var isAnomaly: Bool
 
-        var speedKmh: Double { speed * 3.6 }
-        var speedMph: Double { speed * 2.23694 }
+        nonisolated var speedKmh: Double { speed * 3.6 }
+        nonisolated var speedMph: Double { speed * 2.23694 }
     }
 }
 
 // MARK: - Highlight Markers (placeholder for Phase 2)
-struct Highlight: Identifiable, Codable {
+struct Highlight: Identifiable, Codable, Sendable {
     let id: UUID
     let timestamp: TimeInterval  // Position in video
     let type: HighlightType
     let confidence: Double?
 
-    enum HighlightType: String, Codable {
+    enum HighlightType: String, Codable, Sendable {
         case manual = "MANL"      // User-marked
         case automated = "AIMU"   // IMU-detected
         case fusion = "FUSE"      // Fusion algorithm
@@ -100,9 +101,17 @@ struct Highlight: Identifiable, Codable {
 }
 
 // MARK: - Speed Statistics
-struct SpeedStatistics: Codable {
+struct SpeedStatistics: Codable, Sendable {
     let maxSpeed: Double       // km/h
     let maxSpeedTime: TimeInterval
     let avgSpeed: Double       // km/h
     let filteredSamples: Int   // Number of anomalies removed
+}
+
+// MARK: - Piste Info (Sendable model for cross-actor use)
+struct PisteInfoData: Codable, Sendable {
+    let name: String
+    let difficulty: String?
+    let resort: String?
+    let confidence: Double
 }

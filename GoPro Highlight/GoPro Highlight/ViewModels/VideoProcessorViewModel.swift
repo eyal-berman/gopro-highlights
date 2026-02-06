@@ -85,21 +85,10 @@ class VideoProcessorViewModel {
             // Create GoProVideo objects with duration
             var loadedVideos: [GoProVideo] = []
             for videoURL in videoFiles {
-                var video = GoProVideo(url: videoURL)
-
-                // Get file size
-                if let resources = try? videoURL.resourceValues(forKeys: [.fileSizeKey]),
-                   let fileSize = resources.fileSize {
-                    // Get video duration
-                    let asset = AVAsset(url: videoURL)
-                    if let duration = try? await asset.load(.duration) {
-                        let durationSeconds = CMTimeGetSeconds(duration)
-
-                        video = GoProVideo(url: videoURL)
-                        // Update duration (need to modify GoProVideo initializer)
-                        loadedVideos.append(video)
-                    }
-                }
+                let video = GoProVideo(url: videoURL)
+                // Note: File size and duration will be calculated when needed
+                // to keep the initializer simple
+                loadedVideos.append(video)
             }
 
             self.videos = loadedVideos
@@ -127,27 +116,45 @@ class VideoProcessorViewModel {
             progress.updateProgress(phase: .parsing, progress: 0.0)
             progress.addLog("Phase 1: Parsing GPMF metadata from videos...")
 
-            for (index, var video) in videos.enumerated() {
+            for index in videos.indices {
+                var video = videos[index]
                 progress.currentFile = video.filename
                 video.processingStatus = .parsing
 
+                // Load video duration and file size
                 do {
-                    // Extract telemetry
+                    let asset = AVAsset(url: video.url)
+                    let dur = try await asset.load(.duration)
+                    video.duration = CMTimeGetSeconds(dur)
+                    let attrs = try FileManager.default.attributesOfItem(atPath: video.url.path)
+                    video.fileSize = (attrs[.size] as? Int64) ?? 0
+                } catch {
+                    progress.addLog("  → \(video.filename): Could not load duration", level: .warning)
+                }
+
+                // Extract telemetry (GPS/speed) — independent from highlights
+                do {
                     let telemetry = try await gpmfParser.extractTelemetry(from: video.url)
                     video.telemetry = telemetry
+                    progress.addLog("  ✓ \(video.filename): GPS telemetry (\(telemetry.speedSamples.count) samples)", level: .success)
+                } catch {
+                    progress.addLog("  → \(video.filename): No GPS telemetry (\(error.localizedDescription))", level: .warning)
+                }
 
-                    // Extract highlights
+                // Extract highlights — independent from telemetry
+                do {
                     let highlights = try await gpmfParser.findHighlights(in: video.url)
                     video.highlights = highlights
-
-                    progress.addLog("  ✓ \(video.filename): Found \(highlights.count) highlights", level: .success)
-
-                    // Update video in array
-                    videos[index] = video
-
+                    if !highlights.isEmpty {
+                        progress.addLog("  ✓ \(video.filename): Found \(highlights.count) highlight(s)", level: .success)
+                    } else {
+                        progress.addLog("  → \(video.filename): No highlights marked", level: .info)
+                    }
                 } catch {
-                    progress.addLog("  ✗ \(video.filename): \(error.localizedDescription)", level: .warning)
+                    progress.addLog("  → \(video.filename): Could not read highlights", level: .warning)
                 }
+
+                videos[index] = video
 
                 let phaseProgress = Double(index + 1) / Double(videos.count) * 0.15
                 progress.updateProgress(phase: .parsing, progress: phaseProgress)
@@ -157,14 +164,18 @@ class VideoProcessorViewModel {
             progress.updateProgress(phase: .analyzing, progress: 0.15)
             progress.addLog("Phase 2: Analyzing speed data...")
 
-            for (index, var video) in videos.enumerated() {
-                if let telemetry = video.telemetry {
+            for index in videos.indices {
+                var video = videos[index]
+                if let telemetry = video.telemetry, video.duration > 0 {
                     video.processingStatus = .analyzing
 
-                    let stats = await speedAnalyzer.analyzeSpeed(telemetry: telemetry)
+                    let stats = await speedAnalyzer.analyzeSpeed(
+                        telemetry: telemetry,
+                        videoDuration: video.duration
+                    )
                     video.speedStats = stats
 
-                    progress.addLog("  ✓ \(video.filename): Max speed \(String(format: "%.1f", stats.maxSpeed)) km/h", level: .success)
+                    progress.addLog("  ✓ \(video.filename): Max speed \(String(format: "%.1f", stats.maxSpeed)) km/h, avg \(String(format: "%.1f", stats.avgSpeed)) km/h", level: .success)
 
                     videos[index] = video
                 }
@@ -178,17 +189,24 @@ class VideoProcessorViewModel {
                 progress.updateProgress(phase: .identifyingPistes, progress: 0.25)
                 progress.addLog("Phase 3: Identifying ski pistes...")
 
-                for (index, var video) in videos.enumerated() {
+                for index in videos.indices {
+                    var video = videos[index]
                     if let telemetry = video.telemetry {
                         do {
                             if let pisteInfo = try await pisteIdentifier.identifyPiste(from: telemetry) {
+                                video.pisteInfo = PisteInfoData(
+                                    name: pisteInfo.name,
+                                    difficulty: pisteInfo.difficulty,
+                                    resort: pisteInfo.resort,
+                                    confidence: pisteInfo.confidence
+                                )
+                                videos[index] = video
                                 progress.addLog("  ✓ \(video.filename): \(pisteInfo.name) (confidence: \(Int(pisteInfo.confidence * 100))%)", level: .success)
-                                // TODO: Store piste info in video model
                             } else {
                                 progress.addLog("  → \(video.filename): No piste identified", level: .info)
                             }
                         } catch {
-                            progress.addLog("  ✗ \(video.filename): Piste identification failed", level: .warning)
+                            progress.addLog("  ✗ \(video.filename): Piste identification failed (\(error.localizedDescription))", level: .warning)
                         }
                     }
 
@@ -216,9 +234,7 @@ class VideoProcessorViewModel {
 
                 // Extract highlight segments
                 if !video.highlights.isEmpty && settings.highlightSettings.beforeSeconds >= 0 {
-                    let asset = AVAsset(url: video.url)
-                    let duration = try await asset.load(.duration)
-                    let durationSeconds = CMTimeGetSeconds(duration)
+                    let durationSeconds = video.duration
 
                     let segments = await videoSegmenter.calculateHighlightSegments(
                         highlights: video.highlights,
@@ -269,9 +285,7 @@ class VideoProcessorViewModel {
                    let stats = video.speedStats,
                    stats.maxSpeed > 0 {
 
-                    let asset = AVAsset(url: video.url)
-                    let duration = try await asset.load(.duration)
-                    let durationSeconds = CMTimeGetSeconds(duration)
+                    let durationSeconds = video.duration
 
                     let segment = await videoSegmenter.calculateMaxSpeedSegment(
                         maxSpeedTime: stats.maxSpeedTime,
@@ -338,9 +352,9 @@ class VideoProcessorViewModel {
                         outputURL: stitchedURL,
                         quality: settings.outputSettings.quality,
                         addTransitions: false,
-                        onProgress: { prog in
+                        onProgress: { [self] prog in
                             let phaseProgress = 0.75 + prog * 0.15
-                            progress.updateProgress(phase: .stitching, progress: phaseProgress)
+                            self.progress.updateProgress(phase: .stitching, progress: phaseProgress)
                         }
                     )
 
@@ -373,7 +387,8 @@ class VideoProcessorViewModel {
             progress.addLog("Output directory: \(outputDirectory.path)", level: .info)
 
             // Mark all videos as completed
-            for (index, var video) in videos.enumerated() {
+            for index in videos.indices {
+                var video = videos[index]
                 video.processingStatus = .completed
                 videos[index] = video
             }

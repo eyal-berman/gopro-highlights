@@ -6,11 +6,11 @@
 //
 
 import Foundation
-import AVFoundation
+@preconcurrency import AVFoundation
 import CoreMedia
 import CoreGraphics
-import QuartzCore
-import AppKit
+@preconcurrency import QuartzCore
+@preconcurrency import AppKit
 
 /// Service for rendering overlays (speed gauge, date/time) onto videos
 actor OverlayRenderService {
@@ -161,16 +161,10 @@ actor OverlayRenderService {
         let center = CGPoint(x: gaugeSize / 2, y: gaugeSize / 2)
         let radius = gaugeSize * 0.4
 
-        let gaugePath = NSBezierPath()
-        gaugePath.appendArc(
-            withCenter: center,
-            radius: radius,
-            startAngle: 180,
-            endAngle: 0,
-            clockwise: false
-        )
+        let gaugePath = CGMutablePath()
+        gaugePath.addArc(center: center, radius: radius, startAngle: .pi, endAngle: 0, clockwise: false)
 
-        backgroundLayer.path = gaugePath.cgPath
+        backgroundLayer.path = gaugePath
         backgroundLayer.strokeColor = NSColor.white.withAlphaComponent(0.3).cgColor
         backgroundLayer.fillColor = NSColor.clear.cgColor
         backgroundLayer.lineWidth = 20
@@ -184,11 +178,11 @@ actor OverlayRenderService {
 
         // TODO: Animate needle based on speed samples over time
         // For now, create a static needle
-        let needlePath = NSBezierPath()
+        let needlePath = CGMutablePath()
         needlePath.move(to: center)
-        needlePath.line(to: CGPoint(x: center.x + radius * 0.8, y: center.y))
+        needlePath.addLine(to: CGPoint(x: center.x + radius * 0.8, y: center.y))
 
-        needleLayer.path = needlePath.cgPath
+        needleLayer.path = needlePath
         needleLayer.strokeColor = NSColor.systemBlue.cgColor
         needleLayer.lineWidth = 4
         needleLayer.lineCap = .round
@@ -331,16 +325,19 @@ actor OverlayRenderService {
         exportSession.videoComposition = videoComposition
         exportSession.shouldOptimizeForNetworkUse = true
 
-        // Monitor progress
-        let progressTimer = Timer.publish(every: 0.1, on: .main, in: .common)
-            .autoconnect()
-            .sink { _ in
-                onProgress(Double(exportSession.progress))
+        // Monitor progress with Task
+        let progressTask = Task { [exportSession] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
+                await MainActor.run {
+                    onProgress(Double(exportSession.progress))
+                }
             }
+        }
 
         await exportSession.export()
 
-        progressTimer.cancel()
+        progressTask.cancel()
 
         if let error = exportSession.error {
             throw OverlayError.exportFailed(error.localizedDescription)
@@ -349,32 +346,6 @@ actor OverlayRenderService {
         guard exportSession.status == .completed else {
             throw OverlayError.exportFailed("Export did not complete")
         }
-    }
-}
-
-// MARK: - NSBezierPath to CGPath Extension
-extension NSBezierPath {
-    var cgPath: CGPath {
-        let path = CGMutablePath()
-        var points = [CGPoint](repeating: .zero, count: 3)
-
-        for i in 0..<elementCount {
-            let type = element(at: i, associatedPoints: &points)
-            switch type {
-            case .moveTo:
-                path.move(to: points[0])
-            case .lineTo:
-                path.addLine(to: points[0])
-            case .curveTo:
-                path.addCurve(to: points[2], control1: points[0], control2: points[1])
-            case .closePath:
-                path.closeSubpath()
-            @unknown default:
-                break
-            }
-        }
-
-        return path
     }
 }
 

@@ -6,6 +6,28 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		1F172A562F3639240090B1E6 /* GoPro_HighlightApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F172A352F3639240090B1E6 /* GoPro_HighlightApp.swift */; };
+		1F172A572F3639240090B1E6 /* ExportSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F172A372F3639240090B1E6 /* ExportSettings.swift */; };
+		1F172A582F3639240090B1E6 /* GoProVideo.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F172A382F3639240090B1E6 /* GoProVideo.swift */; };
+		1F172A592F3639240090B1E6 /* ProcessingProgress.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F172A392F3639240090B1E6 /* ProcessingProgress.swift */; };
+		1F172A5A2F3639240090B1E6 /* CSVExportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F172A3B2F3639240090B1E6 /* CSVExportService.swift */; };
+		1F172A5B2F3639240090B1E6 /* PisteIdentificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F172A3C2F3639240090B1E6 /* PisteIdentificationService.swift */; };
+		1F172A5C2F3639240090B1E6 /* SpeedAnalysisService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F172A3D2F3639240090B1E6 /* SpeedAnalysisService.swift */; };
+		1F172A5D2F3639240090B1E6 /* GPMFParserService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F172A3F2F3639240090B1E6 /* GPMFParserService.swift */; };
+		1F172A5E2F3639240090B1E6 /* OverlayRenderService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F172A412F3639240090B1E6 /* OverlayRenderService.swift */; };
+		1F172A5F2F3639240090B1E6 /* VideoSegmentService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F172A422F3639240090B1E6 /* VideoSegmentService.swift */; };
+		1F172A602F3639240090B1E6 /* VideoStitchService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F172A432F3639240090B1E6 /* VideoStitchService.swift */; };
+		1F172A612F3639240090B1E6 /* SettingsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F172A472F3639240090B1E6 /* SettingsViewModel.swift */; };
+		1F172A622F3639240090B1E6 /* VideoProcessorViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F172A482F3639240090B1E6 /* VideoProcessorViewModel.swift */; };
+		1F172A632F3639240090B1E6 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F172A4B2F3639240090B1E6 /* ContentView.swift */; };
+		1F172A642F3639240090B1E6 /* ExportSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F172A4E2F3639240090B1E6 /* ExportSettingsView.swift */; };
+		1F172A652F3639240090B1E6 /* HighlightSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F172A4F2F3639240090B1E6 /* HighlightSettingsView.swift */; };
+		1F172A662F3639240090B1E6 /* MaxSpeedSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F172A502F3639240090B1E6 /* MaxSpeedSettingsView.swift */; };
+		1F172A672F3639240090B1E6 /* OverlaySettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F172A512F3639240090B1E6 /* OverlaySettingsView.swift */; };
+		1F172A682F3639240090B1E6 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 1F172A542F3639240090B1E6 /* Assets.xcassets */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		1F1729B82F36142F0090B1E6 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -27,14 +49,28 @@
 		1F1729AA2F36142E0090B1E6 /* GoPro Highlight.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "GoPro Highlight.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		1F1729B72F36142F0090B1E6 /* GoPro HighlightTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "GoPro HighlightTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		1F1729C12F36142F0090B1E6 /* GoPro HighlightUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "GoPro HighlightUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+		1F172A352F3639240090B1E6 /* GoPro_HighlightApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoPro_HighlightApp.swift; sourceTree = "<group>"; };
+		1F172A372F3639240090B1E6 /* ExportSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportSettings.swift; sourceTree = "<group>"; };
+		1F172A382F3639240090B1E6 /* GoProVideo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoProVideo.swift; sourceTree = "<group>"; };
+		1F172A392F3639240090B1E6 /* ProcessingProgress.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessingProgress.swift; sourceTree = "<group>"; };
+		1F172A3B2F3639240090B1E6 /* CSVExportService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CSVExportService.swift; sourceTree = "<group>"; };
+		1F172A3C2F3639240090B1E6 /* PisteIdentificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PisteIdentificationService.swift; sourceTree = "<group>"; };
+		1F172A3D2F3639240090B1E6 /* SpeedAnalysisService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeedAnalysisService.swift; sourceTree = "<group>"; };
+		1F172A3F2F3639240090B1E6 /* GPMFParserService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GPMFParserService.swift; sourceTree = "<group>"; };
+		1F172A412F3639240090B1E6 /* OverlayRenderService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayRenderService.swift; sourceTree = "<group>"; };
+		1F172A422F3639240090B1E6 /* VideoSegmentService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoSegmentService.swift; sourceTree = "<group>"; };
+		1F172A432F3639240090B1E6 /* VideoStitchService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoStitchService.swift; sourceTree = "<group>"; };
+		1F172A472F3639240090B1E6 /* SettingsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsViewModel.swift; sourceTree = "<group>"; };
+		1F172A482F3639240090B1E6 /* VideoProcessorViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoProcessorViewModel.swift; sourceTree = "<group>"; };
+		1F172A4B2F3639240090B1E6 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		1F172A4E2F3639240090B1E6 /* ExportSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportSettingsView.swift; sourceTree = "<group>"; };
+		1F172A4F2F3639240090B1E6 /* HighlightSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HighlightSettingsView.swift; sourceTree = "<group>"; };
+		1F172A502F3639240090B1E6 /* MaxSpeedSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MaxSpeedSettingsView.swift; sourceTree = "<group>"; };
+		1F172A512F3639240090B1E6 /* OverlaySettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlaySettingsView.swift; sourceTree = "<group>"; };
+		1F172A542F3639240090B1E6 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		1F1729AC2F36142E0090B1E6 /* GoPro Highlight */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = "GoPro Highlight";
-			sourceTree = "<group>";
-		};
 		1F1729BA2F36142F0090B1E6 /* GoPro HighlightTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = "GoPro HighlightTests";
@@ -75,7 +111,7 @@
 		1F1729A12F36142E0090B1E6 = {
 			isa = PBXGroup;
 			children = (
-				1F1729AC2F36142E0090B1E6 /* GoPro Highlight */,
+				1F172A552F3639240090B1E6 /* GoPro Highlight */,
 				1F1729BA2F36142F0090B1E6 /* GoPro HighlightTests */,
 				1F1729C42F36142F0090B1E6 /* GoPro HighlightUITests */,
 				1F1729AB2F36142E0090B1E6 /* Products */,
@@ -92,6 +128,136 @@
 			name = Products;
 			sourceTree = "<group>";
 		};
+		1F172A362F3639240090B1E6 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				1F172A352F3639240090B1E6 /* GoPro_HighlightApp.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		1F172A3A2F3639240090B1E6 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				1F172A372F3639240090B1E6 /* ExportSettings.swift */,
+				1F172A382F3639240090B1E6 /* GoProVideo.swift */,
+				1F172A392F3639240090B1E6 /* ProcessingProgress.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		1F172A3E2F3639240090B1E6 /* Analysis */ = {
+			isa = PBXGroup;
+			children = (
+				1F172A3B2F3639240090B1E6 /* CSVExportService.swift */,
+				1F172A3C2F3639240090B1E6 /* PisteIdentificationService.swift */,
+				1F172A3D2F3639240090B1E6 /* SpeedAnalysisService.swift */,
+			);
+			path = Analysis;
+			sourceTree = "<group>";
+		};
+		1F172A402F3639240090B1E6 /* GPMF */ = {
+			isa = PBXGroup;
+			children = (
+				1F172A3F2F3639240090B1E6 /* GPMFParserService.swift */,
+			);
+			path = GPMF;
+			sourceTree = "<group>";
+		};
+		1F172A442F3639240090B1E6 /* Video */ = {
+			isa = PBXGroup;
+			children = (
+				1F172A412F3639240090B1E6 /* OverlayRenderService.swift */,
+				1F172A422F3639240090B1E6 /* VideoSegmentService.swift */,
+				1F172A432F3639240090B1E6 /* VideoStitchService.swift */,
+			);
+			path = Video;
+			sourceTree = "<group>";
+		};
+		1F172A452F3639240090B1E6 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				1F172A3E2F3639240090B1E6 /* Analysis */,
+				1F172A402F3639240090B1E6 /* GPMF */,
+				1F172A442F3639240090B1E6 /* Video */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		1F172A462F3639240090B1E6 /* Utilities */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = Utilities;
+			sourceTree = "<group>";
+		};
+		1F172A492F3639240090B1E6 /* ViewModels */ = {
+			isa = PBXGroup;
+			children = (
+				1F172A472F3639240090B1E6 /* SettingsViewModel.swift */,
+				1F172A482F3639240090B1E6 /* VideoProcessorViewModel.swift */,
+			);
+			path = ViewModels;
+			sourceTree = "<group>";
+		};
+		1F172A4A2F3639240090B1E6 /* Components */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = Components;
+			sourceTree = "<group>";
+		};
+		1F172A4C2F3639240090B1E6 /* Main */ = {
+			isa = PBXGroup;
+			children = (
+				1F172A4B2F3639240090B1E6 /* ContentView.swift */,
+			);
+			path = Main;
+			sourceTree = "<group>";
+		};
+		1F172A4D2F3639240090B1E6 /* Processing */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = Processing;
+			sourceTree = "<group>";
+		};
+		1F172A522F3639240090B1E6 /* Settings */ = {
+			isa = PBXGroup;
+			children = (
+				1F172A4E2F3639240090B1E6 /* ExportSettingsView.swift */,
+				1F172A4F2F3639240090B1E6 /* HighlightSettingsView.swift */,
+				1F172A502F3639240090B1E6 /* MaxSpeedSettingsView.swift */,
+				1F172A512F3639240090B1E6 /* OverlaySettingsView.swift */,
+			);
+			path = Settings;
+			sourceTree = "<group>";
+		};
+		1F172A532F3639240090B1E6 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				1F172A4A2F3639240090B1E6 /* Components */,
+				1F172A4C2F3639240090B1E6 /* Main */,
+				1F172A4D2F3639240090B1E6 /* Processing */,
+				1F172A522F3639240090B1E6 /* Settings */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		1F172A552F3639240090B1E6 /* GoPro Highlight */ = {
+			isa = PBXGroup;
+			children = (
+				1F172A362F3639240090B1E6 /* App */,
+				1F172A3A2F3639240090B1E6 /* Models */,
+				1F172A452F3639240090B1E6 /* Services */,
+				1F172A462F3639240090B1E6 /* Utilities */,
+				1F172A492F3639240090B1E6 /* ViewModels */,
+				1F172A532F3639240090B1E6 /* Views */,
+				1F172A542F3639240090B1E6 /* Assets.xcassets */,
+			);
+			path = "GoPro Highlight";
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -106,9 +272,6 @@
 			buildRules = (
 			);
 			dependencies = (
-			);
-			fileSystemSynchronizedGroups = (
-				1F1729AC2F36142E0090B1E6 /* GoPro Highlight */,
 			);
 			name = "GoPro Highlight";
 			packageProductDependencies = (
@@ -195,6 +358,9 @@
 			);
 			mainGroup = 1F1729A12F36142E0090B1E6;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				1F172A692F3639A00090B1E6 /* XCRemoteSwiftPackageReference "gpmf-parser" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 1F1729AB2F36142E0090B1E6 /* Products */;
 			projectDirPath = "";
@@ -212,6 +378,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				1F172A682F3639240090B1E6 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -236,6 +403,24 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				1F172A562F3639240090B1E6 /* GoPro_HighlightApp.swift in Sources */,
+				1F172A572F3639240090B1E6 /* ExportSettings.swift in Sources */,
+				1F172A582F3639240090B1E6 /* GoProVideo.swift in Sources */,
+				1F172A592F3639240090B1E6 /* ProcessingProgress.swift in Sources */,
+				1F172A5A2F3639240090B1E6 /* CSVExportService.swift in Sources */,
+				1F172A5B2F3639240090B1E6 /* PisteIdentificationService.swift in Sources */,
+				1F172A5C2F3639240090B1E6 /* SpeedAnalysisService.swift in Sources */,
+				1F172A5D2F3639240090B1E6 /* GPMFParserService.swift in Sources */,
+				1F172A5E2F3639240090B1E6 /* OverlayRenderService.swift in Sources */,
+				1F172A5F2F3639240090B1E6 /* VideoSegmentService.swift in Sources */,
+				1F172A602F3639240090B1E6 /* VideoStitchService.swift in Sources */,
+				1F172A612F3639240090B1E6 /* SettingsViewModel.swift in Sources */,
+				1F172A622F3639240090B1E6 /* VideoProcessorViewModel.swift in Sources */,
+				1F172A632F3639240090B1E6 /* ContentView.swift in Sources */,
+				1F172A642F3639240090B1E6 /* ExportSettingsView.swift in Sources */,
+				1F172A652F3639240090B1E6 /* HighlightSettingsView.swift in Sources */,
+				1F172A662F3639240090B1E6 /* MaxSpeedSettingsView.swift in Sources */,
+				1F172A672F3639240090B1E6 /* OverlaySettingsView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -591,6 +776,17 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		1F172A692F3639A00090B1E6 /* XCRemoteSwiftPackageReference "gpmf-parser" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/gopro/gpmf-parser";
+			requirement = {
+				branch = main;
+				kind = branch;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
 	};
 	rootObject = 1F1729A22F36142E0090B1E6 /* Project object */;
 }

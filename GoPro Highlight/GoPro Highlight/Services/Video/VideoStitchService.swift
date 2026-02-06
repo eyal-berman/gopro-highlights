@@ -6,7 +6,7 @@
 //
 
 import Foundation
-import AVFoundation
+@preconcurrency import AVFoundation
 import CoreMedia
 
 /// Service for stitching multiple video segments into a single video
@@ -160,18 +160,19 @@ actor VideoStitchService {
         exportSession.outputFileType = .mp4
         exportSession.shouldOptimizeForNetworkUse = true
 
-        // Monitor progress
-        let progressTimer = Timer.publish(every: 0.1, on: .main, in: .common)
-            .autoconnect()
-            .sink { _ in
+        // Monitor progress with Task
+        let progressTask = Task { @MainActor [exportSession] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
                 let exportProgress = Double(exportSession.progress) * 0.7 // 70% of total progress
                 onProgress(progressOffset + exportProgress)
             }
+        }
 
         // Export
         await exportSession.export()
 
-        progressTimer.cancel()
+        progressTask.cancel()
 
         // Check for errors
         if let error = exportSession.error {
@@ -192,14 +193,10 @@ actor VideoStitchService {
         format: ExportSettings.OutputSettings.VideoFormat
     ) -> String {
         let baseName = (baseVideoName as NSString).deletingPathExtension
-        let timestamp = dateFormatter.string(from: Date())
-        return "\(baseName)_Stitched_\(segmentCount)clips_\(timestamp).\(format.fileExtension)"
-    }
-
-    private var dateFormatter: DateFormatter {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd_HHmmss"
-        return formatter
+        let timestamp = formatter.string(from: Date())
+        return "\(baseName)_Stitched_\(segmentCount)clips_\(timestamp).\(format.fileExtension)"
     }
 }
 
