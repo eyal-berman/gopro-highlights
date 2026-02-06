@@ -144,13 +144,16 @@ struct VideoListView: View {
 
                 Spacer()
 
-                Button("Start Processing") {
-                    Task {
-                        await viewModel.startProcessing()
+                Button(viewModel.isProcessing ? "Stop Processing" : "Start Processing") {
+                    if viewModel.isProcessing {
+                        viewModel.stopProcessing()
+                    } else {
+                        viewModel.beginProcessing()
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(!viewModel.canProcess)
+                .tint(viewModel.isProcessing ? .red : .accentColor)
+                .disabled(!viewModel.hasVideos && !viewModel.isProcessing)
             }
             .padding()
             .background(Color(nsColor: .controlBackgroundColor))

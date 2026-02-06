@@ -11,15 +11,18 @@ import CoreMedia
 import CoreGraphics
 @preconcurrency import QuartzCore
 @preconcurrency import AppKit
+import CoreText
 
 /// Service for rendering overlays (speed gauge, date/time) onto videos
 actor OverlayRenderService {
+    private var currentExportSession: AVAssetExportSession?
 
     /// Renders overlays onto a video
     func renderOverlays(
         inputURL: URL,
         outputURL: URL,
         telemetry: Telemetry?,
+        videoStartDate: Date?,
         overlaySettings: ExportSettings.OverlaySettings,
         quality: ExportSettings.OutputSettings.ExportQuality,
         onProgress: @escaping (Double) -> Void = { _ in }
@@ -107,7 +110,7 @@ actor OverlayRenderService {
             let dateTimeLayer = createDateTimeLayer(
                 size: videoComposition.renderSize,
                 settings: overlaySettings,
-                videoStartDate: Date() // TODO: Extract from video metadata
+                videoStartDate: videoStartDate ?? Date()
             )
             parentLayer.addSublayer(dateTimeLayer)
         }
@@ -177,10 +180,19 @@ actor OverlayRenderService {
         needleLayer.frame = backgroundLayer.frame
 
         // TODO: Animate needle based on speed samples over time
-        // For now, create a static needle
+        // For now, show the peak speed in the segment.
+        let peakSpeedMps = telemetry.speedSamples.map(\.speed).max() ?? 0
+        let peakSpeedDisplay = settings.speedUnits == .mph ? peakSpeedMps * 2.23694 : peakSpeedMps * 3.6
+        let maxDisplaySpeed = max(settings.maxSpeed, 1)
+        let normalizedSpeed = min(max(peakSpeedDisplay / maxDisplaySpeed, 0), 1)
+        let angle = CGFloat(.pi - normalizedSpeed * .pi)
+
         let needlePath = CGMutablePath()
         needlePath.move(to: center)
-        needlePath.addLine(to: CGPoint(x: center.x + radius * 0.8, y: center.y))
+        needlePath.addLine(to: CGPoint(
+            x: center.x + cos(angle) * radius * 0.8,
+            y: center.y - sin(angle) * radius * 0.8
+        ))
 
         needleLayer.path = needlePath
         needleLayer.strokeColor = NSColor.systemBlue.cgColor
@@ -192,7 +204,8 @@ actor OverlayRenderService {
         // Add speed text
         let speedTextLayer = CATextLayer()
         speedTextLayer.frame = CGRect(x: 0, y: gaugeSize * 0.6, width: gaugeSize, height: 40)
-        speedTextLayer.string = "0" // Will be animated
+        speedTextLayer.string = String(format: "%.0f", peakSpeedDisplay)
+        speedTextLayer.font = NSFont.boldSystemFont(ofSize: 32)
         speedTextLayer.fontSize = 32
         speedTextLayer.foregroundColor = NSColor.white.cgColor
         speedTextLayer.alignmentMode = .center
@@ -222,22 +235,16 @@ actor OverlayRenderService {
         videoStartDate: Date
     ) -> CALayer {
         let dateTimeText = settings.dateTimeFormat.format(date: videoStartDate)
-
-        let textLayer = CATextLayer()
-        textLayer.string = dateTimeText
-        textLayer.fontSize = settings.dateTimeFontSize
-        textLayer.foregroundColor = NSColor.white.cgColor
-        textLayer.contentsScale = 2.0 // Retina
+        let font = NSFont.systemFont(ofSize: settings.dateTimeFontSize, weight: .medium)
 
         // Calculate text size
-        let font = NSFont.systemFont(ofSize: settings.dateTimeFontSize)
         let attributes: [NSAttributedString.Key: Any] = [.font: font]
         let textSize = (dateTimeText as NSString).size(withAttributes: attributes)
 
         // Add padding
         let padding: CGFloat = 16
-        let layerWidth = textSize.width + padding * 2
-        let layerHeight = textSize.height + padding * 2
+        let layerWidth = max(80, textSize.width + padding * 2)
+        let layerHeight = max(30, textSize.height + padding)
 
         // Calculate position
         let position = calculatePosition(
@@ -246,7 +253,7 @@ actor OverlayRenderService {
             overlaySize: max(layerWidth, layerHeight)
         )
 
-        textLayer.frame = CGRect(
+        let containerFrame = CGRect(
             x: position.x - layerWidth / 2,
             y: position.y - layerHeight / 2,
             width: layerWidth,
@@ -255,19 +262,79 @@ actor OverlayRenderService {
 
         // Add background
         let backgroundLayer = CALayer()
-        backgroundLayer.frame = textLayer.frame
+        backgroundLayer.frame = CGRect(origin: .zero, size: containerFrame.size)
         backgroundLayer.backgroundColor = NSColor.black.withAlphaComponent(0.5).cgColor
         backgroundLayer.cornerRadius = 8
+
+        let textLayer = CALayer()
+        textLayer.frame = CGRect(origin: .zero, size: containerFrame.size).insetBy(dx: padding, dy: padding / 2)
+        textLayer.contentsGravity = .center
+        textLayer.contentsScale = 2.0
+        if let textImage = makeTextImage(
+            text: dateTimeText,
+            fontName: font.fontName,
+            fontSize: CGFloat(settings.dateTimeFontSize),
+            color: NSColor.white,
+            canvasSize: textLayer.bounds.size
+        ) {
+            textLayer.contents = textImage
+        }
 
         backgroundLayer.opacity = Float(settings.dateTimeOpacity)
         textLayer.opacity = Float(settings.dateTimeOpacity)
 
         // Container
         let container = CALayer()
+        container.frame = containerFrame
         container.addSublayer(backgroundLayer)
         container.addSublayer(textLayer)
 
         return container
+    }
+
+    private func makeTextImage(
+        text: String,
+        fontName: String,
+        fontSize: CGFloat,
+        color: NSColor,
+        canvasSize: CGSize
+    ) -> CGImage? {
+        let width = max(Int(canvasSize.width * 2.0), 1)
+        let height = max(Int(canvasSize.height * 2.0), 1)
+        guard let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else {
+            return nil
+        }
+
+        context.setFillColor(NSColor.clear.cgColor)
+        context.fill(CGRect(x: 0, y: 0, width: CGFloat(width), height: CGFloat(height)))
+
+        context.translateBy(x: 0, y: CGFloat(height))
+        context.scaleBy(x: 1.0, y: -1.0)
+
+        let ctFont = CTFontCreateWithName(fontName as CFString, fontSize * 2.0, nil)
+        let attributes: [NSAttributedString.Key: Any] = [
+            NSAttributedString.Key(rawValue: kCTFontAttributeName as String): ctFont,
+            NSAttributedString.Key(rawValue: kCTForegroundColorAttributeName as String): color.cgColor
+        ]
+        let attributed = NSAttributedString(string: text, attributes: attributes)
+        let line = CTLineCreateWithAttributedString(attributed as CFAttributedString)
+
+        let bounds = CTLineGetBoundsWithOptions(line, [.useGlyphPathBounds, .excludeTypographicLeading])
+        let x = max((CGFloat(width) - bounds.width) / 2.0 - bounds.origin.x, 0)
+        let y = max((CGFloat(height) - bounds.height) / 2.0 - bounds.origin.y, 0)
+
+        context.textPosition = CGPoint(x: x, y: y)
+        CTLineDraw(line, context)
+
+        return context.makeImage()
     }
 
     // MARK: - Helper Methods
@@ -313,31 +380,53 @@ actor OverlayRenderService {
             try FileManager.default.removeItem(at: outputURL)
         }
 
+        // Passthrough does not apply videoComposition, so force a re-encode preset for overlays.
+        let presetName = quality == .original ? AVAssetExportPresetHighestQuality : quality.avPreset
+
         guard let exportSession = AVAssetExportSession(
             asset: composition,
-            presetName: quality.avPreset
+            presetName: presetName
         ) else {
             throw OverlayError.exportSessionCreationFailed
         }
+        currentExportSession = exportSession
 
         exportSession.outputURL = outputURL
-        exportSession.outputFileType = .mp4
+        let preferredFileType = preferredOutputFileType(for: outputURL)
+        if exportSession.supportedFileTypes.contains(preferredFileType) {
+            exportSession.outputFileType = preferredFileType
+        } else if let fallbackFileType = exportSession.supportedFileTypes.first {
+            exportSession.outputFileType = fallbackFileType
+        } else {
+            throw OverlayError.exportFailed("No supported output file type for overlay export")
+        }
         exportSession.videoComposition = videoComposition
         exportSession.shouldOptimizeForNetworkUse = true
 
         // Monitor progress with Task
-        let progressTask = Task { [exportSession] in
+        let progressTask = Task { [self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
+                let progress = await currentExportProgress()
                 await MainActor.run {
-                    onProgress(Double(exportSession.progress))
+                    onProgress(progress)
                 }
             }
         }
 
-        await exportSession.export()
+        await withTaskCancellationHandler(
+            operation: {
+                await runCurrentExport()
+            },
+            onCancel: {
+                Task { [self] in
+                    await cancelCurrentExport()
+                }
+            }
+        )
 
         progressTask.cancel()
+        currentExportSession = nil
 
         if let error = exportSession.error {
             throw OverlayError.exportFailed(error.localizedDescription)
@@ -345,6 +434,27 @@ actor OverlayRenderService {
 
         guard exportSession.status == .completed else {
             throw OverlayError.exportFailed("Export did not complete")
+        }
+    }
+
+    private func runCurrentExport() async {
+        await currentExportSession?.export()
+    }
+
+    private func cancelCurrentExport() {
+        currentExportSession?.cancelExport()
+    }
+
+    private func currentExportProgress() -> Double {
+        Double(currentExportSession?.progress ?? 0)
+    }
+
+    private func preferredOutputFileType(for url: URL) -> AVFileType {
+        switch url.pathExtension.lowercased() {
+        case "mov":
+            return .mov
+        default:
+            return .mp4
         }
     }
 }

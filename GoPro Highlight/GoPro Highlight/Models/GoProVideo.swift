@@ -15,6 +15,7 @@ struct GoProVideo: Identifiable, Codable, Sendable {
     let filename: String
     var duration: TimeInterval
     var fileSize: Int64
+    var captureDate: Date?
 
     var telemetry: Telemetry?
     var speedStats: SpeedStatistics?
@@ -29,6 +30,7 @@ struct GoProVideo: Identifiable, Codable, Sendable {
         self.filename = url.lastPathComponent
         self.duration = 0 // Will be populated when video is loaded
         self.fileSize = 0 // Will be populated from file attributes
+        self.captureDate = nil
         self.highlights = []
         self.processingStatus = .pending
     }
