@@ -8,6 +8,7 @@
 import Foundation
 import Observation
 import SwiftUI
+import AVFoundation
 
 /// Main ViewModel that orchestrates video processing workflow
 @MainActor
@@ -21,6 +22,15 @@ class VideoProcessorViewModel {
     var isProcessing: Bool = false
     var showError: Bool = false
     var errorMessage: String = ""
+
+    // MARK: - Services
+    private let gpmfParser = GPMFParserService()
+    private let speedAnalyzer = SpeedAnalysisService()
+    private let csvExporter = CSVExportService()
+    private let videoSegmenter = VideoSegmentService()
+    private let videoStitcher = VideoStitchService()
+    private let overlayRenderer = OverlayRenderService()
+    private let pisteIdentifier = PisteIdentificationService()
 
     // MARK: - Computed Properties
     var hasVideos: Bool {
@@ -72,7 +82,7 @@ class VideoProcessorViewModel {
 
             progress.addLog("Found \(videoFiles.count) video file(s)")
 
-            // Create GoProVideo objects
+            // Create GoProVideo objects with duration
             var loadedVideos: [GoProVideo] = []
             for videoURL in videoFiles {
                 var video = GoProVideo(url: videoURL)
@@ -80,8 +90,15 @@ class VideoProcessorViewModel {
                 // Get file size
                 if let resources = try? videoURL.resourceValues(forKeys: [.fileSizeKey]),
                    let fileSize = resources.fileSize {
-                    video = GoProVideo(url: videoURL)
-                    loadedVideos.append(video)
+                    // Get video duration
+                    let asset = AVAsset(url: videoURL)
+                    if let duration = try? await asset.load(.duration) {
+                        let durationSeconds = CMTimeGetSeconds(duration)
+
+                        video = GoProVideo(url: videoURL)
+                        // Update duration (need to modify GoProVideo initializer)
+                        loadedVideos.append(video)
+                    }
                 }
             }
 
@@ -103,35 +120,316 @@ class VideoProcessorViewModel {
         progress.reset()
         progress.isProcessing = true
         progress.totalFiles = videos.count
-        progress.addLog("Starting video processing...")
+        progress.addLog("Starting video processing...", level: .info)
 
-        // This will be implemented in later phases
-        // For now, just show a placeholder
-        progress.updateProgress(phase: .parsing, progress: 0.1)
-        progress.addLog("Phase 1: Parsing metadata (not yet implemented)")
+        do {
+            // Phase 1: Parse GPMF metadata
+            progress.updateProgress(phase: .parsing, progress: 0.0)
+            progress.addLog("Phase 1: Parsing GPMF metadata from videos...")
 
-        // TODO: Phase 2 - Implement GPMF parsing
-        // TODO: Phase 3 - Implement speed analysis
-        // TODO: Phase 4 - Implement highlight extraction
-        // TODO: Phase 5 - Implement max speed extraction
-        // TODO: Phase 6 - Implement overlays
-        // TODO: Phase 7 - Implement piste identification
-        // TODO: Phase 8 - Implement video stitching
+            for (index, var video) in videos.enumerated() {
+                progress.currentFile = video.filename
+                video.processingStatus = .parsing
 
-        // Simulate processing
-        try? await Task.sleep(nanoseconds: 1_000_000_000)
+                do {
+                    // Extract telemetry
+                    let telemetry = try await gpmfParser.extractTelemetry(from: video.url)
+                    video.telemetry = telemetry
 
-        progress.updateProgress(phase: .completed, progress: 1.0)
-        progress.addLog("Processing placeholder completed", level: .success)
+                    // Extract highlights
+                    let highlights = try await gpmfParser.findHighlights(in: video.url)
+                    video.highlights = highlights
+
+                    progress.addLog("  ✓ \(video.filename): Found \(highlights.count) highlights", level: .success)
+
+                    // Update video in array
+                    videos[index] = video
+
+                } catch {
+                    progress.addLog("  ✗ \(video.filename): \(error.localizedDescription)", level: .warning)
+                }
+
+                let phaseProgress = Double(index + 1) / Double(videos.count) * 0.15
+                progress.updateProgress(phase: .parsing, progress: phaseProgress)
+            }
+
+            // Phase 2: Analyze speed data
+            progress.updateProgress(phase: .analyzing, progress: 0.15)
+            progress.addLog("Phase 2: Analyzing speed data...")
+
+            for (index, var video) in videos.enumerated() {
+                if let telemetry = video.telemetry {
+                    video.processingStatus = .analyzing
+
+                    let stats = await speedAnalyzer.analyzeSpeed(telemetry: telemetry)
+                    video.speedStats = stats
+
+                    progress.addLog("  ✓ \(video.filename): Max speed \(String(format: "%.1f", stats.maxSpeed)) km/h", level: .success)
+
+                    videos[index] = video
+                }
+
+                let phaseProgress = 0.15 + Double(index + 1) / Double(videos.count) * 0.10
+                progress.updateProgress(phase: .analyzing, progress: phaseProgress)
+            }
+
+            // Phase 3: Identify ski pistes
+            if true { // Can be made configurable
+                progress.updateProgress(phase: .identifyingPistes, progress: 0.25)
+                progress.addLog("Phase 3: Identifying ski pistes...")
+
+                for (index, var video) in videos.enumerated() {
+                    if let telemetry = video.telemetry {
+                        do {
+                            if let pisteInfo = try await pisteIdentifier.identifyPiste(from: telemetry) {
+                                progress.addLog("  ✓ \(video.filename): \(pisteInfo.name) (confidence: \(Int(pisteInfo.confidence * 100))%)", level: .success)
+                                // TODO: Store piste info in video model
+                            } else {
+                                progress.addLog("  → \(video.filename): No piste identified", level: .info)
+                            }
+                        } catch {
+                            progress.addLog("  ✗ \(video.filename): Piste identification failed", level: .warning)
+                        }
+                    }
+
+                    let phaseProgress = 0.25 + Double(index + 1) / Double(videos.count) * 0.10
+                    progress.updateProgress(phase: .identifyingPistes, progress: phaseProgress)
+                }
+            }
+
+            // Phase 4: Extract video segments
+            progress.updateProgress(phase: .extracting, progress: 0.35)
+            progress.addLog("Phase 4: Extracting video segments...")
+
+            let outputDir = settings.outputSettings.outputDirectory ?? selectedFolderURL?.appendingPathComponent("GoPro_Output")
+            guard let outputDirectory = outputDir else {
+                throw ProcessingError.noOutputDirectory
+            }
+
+            // Create output directory
+            try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
+
+            var allSegmentFiles: [VideoStitchService.SegmentFile] = []
+
+            for (videoIndex, video) in videos.enumerated() {
+                progress.currentFile = video.filename
+
+                // Extract highlight segments
+                if !video.highlights.isEmpty && settings.highlightSettings.beforeSeconds >= 0 {
+                    let asset = AVAsset(url: video.url)
+                    let duration = try await asset.load(.duration)
+                    let durationSeconds = CMTimeGetSeconds(duration)
+
+                    let segments = await videoSegmenter.calculateHighlightSegments(
+                        highlights: video.highlights,
+                        beforeSeconds: settings.highlightSettings.beforeSeconds,
+                        afterSeconds: settings.highlightSettings.afterSeconds,
+                        videoDuration: durationSeconds,
+                        mergeOverlapping: settings.highlightSettings.mergeOverlapping
+                    )
+
+                    progress.addLog("  → \(video.filename): Extracting \(segments.count) highlight segment(s)...")
+
+                    for (segIndex, segment) in segments.enumerated() {
+                        let outputFilename = await videoSegmenter.generateOutputFilename(
+                            originalFilename: video.filename,
+                            segmentIndex: segIndex,
+                            segmentType: segment.type,
+                            format: settings.outputSettings.format
+                        )
+
+                        let segmentOutputURL = outputDirectory.appendingPathComponent(outputFilename)
+
+                        do {
+                            try await videoSegmenter.extractSegment(
+                                from: video.url,
+                                segment: segment,
+                                outputURL: segmentOutputURL,
+                                quality: settings.outputSettings.quality,
+                                onProgress: { prog in
+                                    // Update progress
+                                }
+                            )
+
+                            progress.addLog("    ✓ Created: \(outputFilename)", level: .success)
+
+                            allSegmentFiles.append(VideoStitchService.SegmentFile(
+                                url: segmentOutputURL,
+                                originalVideoName: video.filename
+                            ))
+
+                        } catch {
+                            progress.addLog("    ✗ Failed: \(error.localizedDescription)", level: .error)
+                        }
+                    }
+                }
+
+                // Extract max speed segments
+                if settings.maxSpeedSettings.enabled,
+                   let stats = video.speedStats,
+                   stats.maxSpeed > 0 {
+
+                    let asset = AVAsset(url: video.url)
+                    let duration = try await asset.load(.duration)
+                    let durationSeconds = CMTimeGetSeconds(duration)
+
+                    let segment = await videoSegmenter.calculateMaxSpeedSegment(
+                        maxSpeedTime: stats.maxSpeedTime,
+                        beforeSeconds: settings.maxSpeedSettings.beforeSeconds,
+                        afterSeconds: settings.maxSpeedSettings.afterSeconds,
+                        videoDuration: durationSeconds
+                    )
+
+                    let outputFilename = await videoSegmenter.generateOutputFilename(
+                        originalFilename: video.filename,
+                        segmentIndex: 0,
+                        segmentType: .maxSpeed,
+                        maxSpeed: stats.maxSpeed,
+                        format: settings.outputSettings.format
+                    )
+
+                    let segmentOutputURL = outputDirectory.appendingPathComponent(outputFilename)
+
+                    do {
+                        try await videoSegmenter.extractSegment(
+                            from: video.url,
+                            segment: segment,
+                            outputURL: segmentOutputURL,
+                            quality: settings.outputSettings.quality
+                        )
+
+                        progress.addLog("  ✓ Max speed segment: \(outputFilename)", level: .success)
+
+                        // Apply overlays if needed
+                        if settings.maxSpeedSettings.includeOverlay &&
+                           (settings.overlaySettings.speedGaugeEnabled || settings.overlaySettings.dateTimeEnabled) {
+                            try await applyOverlays(
+                                inputURL: segmentOutputURL,
+                                video: video,
+                                outputDir: outputDirectory
+                            )
+                        }
+
+                    } catch {
+                        progress.addLog("  ✗ Max speed extraction failed: \(error.localizedDescription)", level: .error)
+                    }
+                }
+
+                let phaseProgress = 0.35 + Double(videoIndex + 1) / Double(videos.count) * 0.40
+                progress.updateProgress(phase: .extracting, progress: phaseProgress)
+            }
+
+            // Phase 5: Stitch videos if requested
+            if settings.outputSettings.outputMode != .individual && !allSegmentFiles.isEmpty {
+                progress.updateProgress(phase: .stitching, progress: 0.75)
+                progress.addLog("Phase 5: Stitching segments together...")
+
+                let stitchedFilename = await videoStitcher.generateStitchedFilename(
+                    baseVideoName: "GoPro_Highlights",
+                    segmentCount: allSegmentFiles.count,
+                    format: settings.outputSettings.format
+                )
+
+                let stitchedURL = outputDirectory.appendingPathComponent(stitchedFilename)
+
+                do {
+                    try await videoStitcher.stitchSegments(
+                        allSegmentFiles,
+                        outputURL: stitchedURL,
+                        quality: settings.outputSettings.quality,
+                        addTransitions: false,
+                        onProgress: { prog in
+                            let phaseProgress = 0.75 + prog * 0.15
+                            progress.updateProgress(phase: .stitching, progress: phaseProgress)
+                        }
+                    )
+
+                    progress.addLog("✓ Created stitched video: \(stitchedFilename)", level: .success)
+
+                } catch {
+                    progress.addLog("✗ Stitching failed: \(error.localizedDescription)", level: .error)
+                }
+            }
+
+            // Phase 6: Generate CSV report
+            progress.updateProgress(phase: .generatingCSV, progress: 0.90)
+            progress.addLog("Phase 6: Generating CSV report...")
+
+            do {
+                let csvURL = try await csvExporter.generateReport(videos: videos, includePisteInfo: true)
+                let finalCSVURL = outputDirectory.appendingPathComponent("GoPro_Analysis.csv")
+
+                try FileManager.default.copyItem(at: csvURL, to: finalCSVURL)
+
+                progress.addLog("✓ CSV report saved: GoPro_Analysis.csv", level: .success)
+
+            } catch {
+                progress.addLog("✗ CSV generation failed: \(error.localizedDescription)", level: .error)
+            }
+
+            // Complete
+            progress.updateProgress(phase: .completed, progress: 1.0)
+            progress.addLog("🎉 Processing completed successfully!", level: .success)
+            progress.addLog("Output directory: \(outputDirectory.path)", level: .info)
+
+            // Mark all videos as completed
+            for (index, var video) in videos.enumerated() {
+                video.processingStatus = .completed
+                videos[index] = video
+            }
+
+        } catch {
+            errorMessage = "Processing failed: \(error.localizedDescription)"
+            showError = true
+            progress.addLog("❌ Processing failed: \(error.localizedDescription)", level: .error)
+        }
+
         isProcessing = false
+        progress.filesCompleted = videos.count
+    }
+
+    // MARK: - Apply Overlays
+    private func applyOverlays(
+        inputURL: URL,
+        video: GoProVideo,
+        outputDir: URL
+    ) async throws {
+        progress.addLog("    → Applying overlays...")
+
+        let overlayOutputURL = inputURL.deletingPathExtension()
+            .appendingPathExtension("_overlay")
+            .appendingPathExtension(settings.outputSettings.format.fileExtension)
+
+        try await overlayRenderer.renderOverlays(
+            inputURL: inputURL,
+            outputURL: overlayOutputURL,
+            telemetry: video.telemetry,
+            overlaySettings: settings.overlaySettings,
+            quality: settings.outputSettings.quality
+        )
+
+        // Replace original with overlay version
+        try FileManager.default.removeItem(at: inputURL)
+        try FileManager.default.moveItem(at: overlayOutputURL, to: inputURL)
+
+        progress.addLog("    ✓ Overlays applied", level: .success)
     }
 
     // MARK: - Export CSV
     func exportCSV(to url: URL) async {
         progress.addLog("Exporting CSV to: \(url.lastPathComponent)")
 
-        // This will be implemented in Phase 3
-        progress.addLog("CSV export not yet implemented")
+        do {
+            let csvURL = try await csvExporter.generateReport(videos: videos, includePisteInfo: true)
+            try FileManager.default.copyItem(at: csvURL, to: url)
+
+            progress.addLog("✓ CSV exported successfully", level: .success)
+
+        } catch {
+            errorMessage = "CSV export failed: \(error.localizedDescription)"
+            showError = true
+            progress.addLog("✗ CSV export failed: \(error.localizedDescription)", level: .error)
+        }
     }
 
     // MARK: - Clear Videos
@@ -140,5 +438,17 @@ class VideoProcessorViewModel {
         selectedFolderURL = nil
         progress.reset()
         progress.addLog("Cleared all videos")
+    }
+}
+
+// MARK: - Errors
+enum ProcessingError: LocalizedError {
+    case noOutputDirectory
+
+    var errorDescription: String? {
+        switch self {
+        case .noOutputDirectory:
+            return "No output directory specified"
+        }
     }
 }
