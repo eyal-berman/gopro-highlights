@@ -344,7 +344,8 @@ class VideoProcessorViewModel {
                                 originalVideoName: video.filename,
                                 durationSeconds: segment.duration,
                                 sourceCaptureDate: video.captureDate,
-                                segmentStartTime: segment.startTime
+                                segmentStartTime: segment.startTime,
+                                kind: .highlight
                             ))
 
                         } catch {
@@ -398,7 +399,8 @@ class VideoProcessorViewModel {
                             originalVideoName: video.filename,
                             durationSeconds: segment.duration,
                             sourceCaptureDate: video.captureDate,
-                            segmentStartTime: segment.startTime
+                            segmentStartTime: segment.startTime,
+                            kind: .maxSpeed
                         ))
 
                         // Apply overlays if needed
@@ -474,7 +476,7 @@ class VideoProcessorViewModel {
                     progress.addLog("✓ Created stitched video: \(stitchedURL.lastPathComponent)", level: .success)
                     if settings.outputSettings.outputMode == .stitched {
                         var deletedCount = 0
-                        for segment in sortedSegmentFiles {
+                        for segment in sortedSegmentFiles where segment.kind == .highlight {
                             if FileManager.default.fileExists(atPath: segment.url.path) {
                                 do {
                                     try FileManager.default.removeItem(at: segment.url)
@@ -484,7 +486,11 @@ class VideoProcessorViewModel {
                                 }
                             }
                         }
-                        progress.addLog("  ✓ Removed \(deletedCount) temporary segment file(s) for stitched-only output")
+                        let keptCount = sortedSegmentFiles.filter { $0.kind == .maxSpeed }.count
+                        progress.addLog("  ✓ Removed \(deletedCount) temporary highlight file(s) for stitched-only output")
+                        if keptCount > 0 {
+                            progress.addLog("  ✓ Kept \(keptCount) max-speed file(s)")
+                        }
                     }
 
                 } catch {
@@ -561,6 +567,11 @@ class VideoProcessorViewModel {
         progress.addLog(
             "      → telemetry samples: \(video.telemetry?.speedSamples.count ?? 0), speedGauge=\(settings.overlaySettings.speedGaugeEnabled), dateTime=\(settings.overlaySettings.dateTimeEnabled)"
         )
+        if settings.overlaySettings.speedGaugeEnabled {
+            progress.addLog(
+                "      → gauge settings: pos=\(settings.overlaySettings.gaugePosition.rawValue), max=\(Int(settings.overlaySettings.maxSpeed)) \(settings.overlaySettings.speedUnits.rawValue), opacity=\(Int(settings.overlaySettings.gaugeOpacity * 100))%"
+            )
+        }
         if settings.overlaySettings.dateTimeEnabled {
             let overlayDate = video.captureDate ?? Date()
             progress.addLog("      → date/time text: \(settings.overlaySettings.dateTimeFormat.format(date: overlayDate))")

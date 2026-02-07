@@ -191,7 +191,11 @@ actor OpenStreetMapService {
         let wayPoints: [CLLocationCoordinate2D]
     }
 
-    private let overpassURL = "https://overpass-api.de/api/interpreter"
+    private let overpassURLs = [
+        "https://overpass-api.de/api/interpreter",
+        "https://overpass.kumi.systems/api/interpreter",
+        "https://overpass.openstreetmap.fr/api/interpreter"
+    ]
 
     /// Queries nearby ski pistes from OpenStreetMap
     func queryNearbyPistes(
@@ -211,30 +215,38 @@ actor OpenStreetMapService {
         out skel qt;
         """
 
-        // Create request
-        var components = URLComponents(string: overpassURL)!
-        components.queryItems = [URLQueryItem(name: "data", value: query)]
+        var errors: [String] = []
+        for endpoint in overpassURLs {
+            var components = URLComponents(string: endpoint)
+            components?.queryItems = [URLQueryItem(name: "data", value: query)]
 
-        guard let url = components.url else {
-            throw OSMError.invalidURL
+            guard let url = components?.url else {
+                errors.append("\(endpoint): invalid URL")
+                continue
+            }
+
+            var request = URLRequest(url: url)
+            request.httpMethod = "GET"
+            request.timeoutInterval = 20
+            request.setValue("GoPro Highlight Processor", forHTTPHeaderField: "User-Agent")
+
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    errors.append("\(endpoint): non-HTTP response")
+                    continue
+                }
+                guard httpResponse.statusCode == 200 else {
+                    errors.append("\(endpoint): HTTP \(httpResponse.statusCode)")
+                    continue
+                }
+                return try parseOverpassResponse(data)
+            } catch {
+                errors.append("\(endpoint): \(error.localizedDescription)")
+            }
         }
 
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue("GoPro Highlight Processor", forHTTPHeaderField: "User-Agent")
-
-        // Execute request
-        let (data, response) = try await URLSession.shared.data(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse,
-              httpResponse.statusCode == 200 else {
-            throw OSMError.requestFailed
-        }
-
-        // Parse response
-        let pistes = try parseOverpassResponse(data)
-
-        return pistes
+        throw OSMError.networkUnavailable(errors.joined(separator: " | "))
     }
 
     /// Parses Overpass API JSON response
@@ -308,6 +320,7 @@ enum OSMError: LocalizedError {
     case invalidURL
     case requestFailed
     case parsingFailed
+    case networkUnavailable(String)
 
     var errorDescription: String? {
         switch self {
@@ -317,6 +330,8 @@ enum OSMError: LocalizedError {
             return "Failed to query OpenStreetMap"
         case .parsingFailed:
             return "Failed to parse OpenStreetMap response"
+        case .networkUnavailable(let details):
+            return "OpenStreetMap network/DNS unavailable: \(details)"
         }
     }
 }

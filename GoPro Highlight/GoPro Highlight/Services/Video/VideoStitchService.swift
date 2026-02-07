@@ -19,6 +19,12 @@ actor VideoStitchService {
         let durationSeconds: TimeInterval
         let sourceCaptureDate: Date?
         let segmentStartTime: TimeInterval
+        let kind: SegmentKind
+    }
+
+    enum SegmentKind {
+        case highlight
+        case maxSpeed
     }
 
     /// Stitches multiple video files into a single output file

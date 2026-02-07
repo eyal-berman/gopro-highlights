@@ -90,9 +90,12 @@ actor OverlayRenderService {
         // Create overlay layers
         let parentLayer = CALayer()
         let videoLayer = CALayer()
+        let overlayLayer = CALayer()
         parentLayer.frame = CGRect(origin: .zero, size: videoComposition.renderSize)
         videoLayer.frame = CGRect(origin: .zero, size: videoComposition.renderSize)
+        overlayLayer.frame = CGRect(origin: .zero, size: videoComposition.renderSize)
         parentLayer.addSublayer(videoLayer)
+        parentLayer.addSublayer(overlayLayer)
 
         // Add speed gauge overlay if enabled
         if overlaySettings.speedGaugeEnabled, let telemetry = telemetry {
@@ -102,7 +105,7 @@ actor OverlayRenderService {
                 settings: overlaySettings,
                 duration: duration
             )
-            parentLayer.addSublayer(gaugeLayer)
+            overlayLayer.addSublayer(gaugeLayer)
         }
 
         // Add date/time overlay if enabled
@@ -112,7 +115,7 @@ actor OverlayRenderService {
                 settings: overlaySettings,
                 videoStartDate: videoStartDate ?? Date()
             )
-            parentLayer.addSublayer(dateTimeLayer)
+            overlayLayer.addSublayer(dateTimeLayer)
         }
 
         // Create animation tool
@@ -157,6 +160,13 @@ actor OverlayRenderService {
         gaugeLayer.opacity = Float(settings.gaugeOpacity)
 
         // Create gauge background
+        let panelLayer = CAShapeLayer()
+        panelLayer.frame = CGRect(x: 0, y: 0, width: gaugeSize, height: gaugeSize)
+        panelLayer.path = CGPath(ellipseIn: CGRect(x: gaugeSize * 0.08, y: gaugeSize * 0.08, width: gaugeSize * 0.84, height: gaugeSize * 0.84), transform: nil)
+        panelLayer.fillColor = NSColor.black.withAlphaComponent(0.28).cgColor
+        panelLayer.strokeColor = NSColor.clear.cgColor
+        gaugeLayer.addSublayer(panelLayer)
+
         let backgroundLayer = CAShapeLayer()
         backgroundLayer.frame = CGRect(x: 0, y: 0, width: gaugeSize, height: gaugeSize)
 
@@ -315,9 +325,6 @@ actor OverlayRenderService {
 
         context.setFillColor(NSColor.clear.cgColor)
         context.fill(CGRect(x: 0, y: 0, width: CGFloat(width), height: CGFloat(height)))
-
-        context.translateBy(x: 0, y: CGFloat(height))
-        context.scaleBy(x: 1.0, y: -1.0)
 
         let ctFont = CTFontCreateWithName(fontName as CFString, fontSize * 2.0, nil)
         let attributes: [NSAttributedString.Key: Any] = [
