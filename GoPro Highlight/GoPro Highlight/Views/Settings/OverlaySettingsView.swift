@@ -71,6 +71,67 @@ struct OverlaySettingsView: View {
                                 .frame(width: 40, alignment: .trailing)
                                 .foregroundStyle(.secondary)
                         }
+
+                        HStack {
+                            Text("Gauge Size:")
+                                .frame(width: 140, alignment: .leading)
+
+                            Slider(value: $settings.gaugeScale, in: 0.6...2.0, step: 0.05)
+                                .frame(width: 150)
+
+                            Text("\(Int(settings.gaugeScale * 100))%")
+                                .frame(width: 40, alignment: .trailing)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.leading, 20)
+                }
+            }
+
+            Divider()
+
+            // Piste Details Section
+            VStack(alignment: .leading, spacing: 12) {
+                Toggle("Piste Details Overlay", isOn: $settings.pisteDetailsEnabled)
+                    .fontWeight(.medium)
+
+                if settings.pisteDetailsEnabled {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Text("Position:")
+                                .frame(width: 140, alignment: .leading)
+
+                            Picker("", selection: $settings.pisteDetailsPosition) {
+                                ForEach(ExportSettings.OverlaySettings.OverlayPosition.allCases, id: \.self) { position in
+                                    Text(position.rawValue).tag(position)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                        }
+
+                        HStack {
+                            Text("Font Size:")
+                                .frame(width: 140, alignment: .leading)
+
+                            Slider(value: $settings.pisteDetailsFontSize, in: 12...56, step: 1)
+                                .frame(width: 150)
+
+                            Text("\(Int(settings.pisteDetailsFontSize))pt")
+                                .frame(width: 40, alignment: .trailing)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        HStack {
+                            Text("Opacity:")
+                                .frame(width: 140, alignment: .leading)
+
+                            Slider(value: $settings.pisteDetailsOpacity, in: 0.3...1.0)
+                                .frame(width: 150)
+
+                            Text("\(Int(settings.pisteDetailsOpacity * 100))%")
+                                .frame(width: 40, alignment: .trailing)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                     .padding(.leading, 20)
                 }
@@ -150,7 +211,7 @@ struct OverlaySettingsView: View {
                 }
             }
 
-            if settings.speedGaugeEnabled || settings.dateTimeEnabled {
+            if settings.speedGaugeEnabled || settings.dateTimeEnabled || settings.pisteDetailsEnabled {
                 Divider()
 
                 HStack {

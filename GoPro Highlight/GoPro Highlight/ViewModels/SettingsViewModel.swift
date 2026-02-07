@@ -66,8 +66,16 @@ class SettingsViewModel {
             warnings.append("Speed gauge max speed must be positive")
         }
 
+        if settings.overlaySettings.speedGaugeEnabled && settings.overlaySettings.gaugeScale <= 0 {
+            warnings.append("Speed gauge size must be positive")
+        }
+
         if settings.overlaySettings.dateTimeEnabled && settings.overlaySettings.dateTimeFontSize < 8 {
             warnings.append("Date/Time font size must be at least 8")
+        }
+
+        if settings.overlaySettings.pisteDetailsEnabled && settings.overlaySettings.pisteDetailsFontSize < 8 {
+            warnings.append("Piste details font size must be at least 8")
         }
 
         return warnings
@@ -99,6 +107,10 @@ class SettingsViewModel {
 
         if settings.overlaySettings.dateTimeEnabled {
             multiplier += 0.3
+        }
+
+        if settings.overlaySettings.pisteDetailsEnabled {
+            multiplier += 0.2
         }
 
         // Stitching

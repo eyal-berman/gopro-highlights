@@ -20,6 +20,7 @@ actor PisteIdentificationService {
 
     private let osmService = OpenStreetMapService()
     private var pisteCache: [String: [OpenStreetMapService.PisteData]] = [:]
+    private var resortCache: [String: String] = [:]
 
     /// Identifies which ski piste a video was recorded on based on GPS telemetry
     func identifyPiste(from telemetry: Telemetry) async throws -> PisteInfo? {
@@ -29,13 +30,21 @@ actor PisteIdentificationService {
 
         // Calculate center point
         let centerPoint = calculateCenterPoint(from: telemetry.gpsPoints)
+        let searchRadius = 5000.0
+        let cacheKey = makeCacheKey(latitude: centerPoint.latitude, longitude: centerPoint.longitude, radiusMeters: searchRadius)
 
-        // Query nearby pistes from OpenStreetMap
-        let pistes = try await osmService.queryNearbyPistes(
-            centerLat: centerPoint.latitude,
-            centerLon: centerPoint.longitude,
-            radiusMeters: 5000 // 5km search radius
-        )
+        let pistes: [OpenStreetMapService.PisteData]
+        if let cached = pisteCache[cacheKey] {
+            pistes = cached
+        } else {
+            let queried = try await osmService.queryNearbyPistes(
+                centerLat: centerPoint.latitude,
+                centerLon: centerPoint.longitude,
+                radiusMeters: searchRadius
+            )
+            pisteCache[cacheKey] = queried
+            pistes = queried
+        }
 
         guard !pistes.isEmpty else {
             return nil // No pistes found nearby
@@ -46,6 +55,40 @@ actor PisteIdentificationService {
             gpsPoints: telemetry.gpsPoints,
             pistes: pistes
         )
+
+        guard var match else {
+            return nil
+        }
+
+        if match.resort == nil {
+            if let dominantResort = dominantResortName(in: pistes) {
+                match = PisteInfo(
+                    name: match.name,
+                    difficulty: match.difficulty,
+                    resort: dominantResort,
+                    confidence: match.confidence
+                )
+            } else if let cachedResort = resortCache[cacheKey] {
+                match = PisteInfo(
+                    name: match.name,
+                    difficulty: match.difficulty,
+                    resort: cachedResort,
+                    confidence: match.confidence
+                )
+            } else if let nearestResort = try? await osmService.queryNearestResortName(
+                centerLat: centerPoint.latitude,
+                centerLon: centerPoint.longitude,
+                radiusMeters: 25000
+            ) {
+                resortCache[cacheKey] = nearestResort
+                match = PisteInfo(
+                    name: match.name,
+                    difficulty: match.difficulty,
+                    resort: nearestResort,
+                    confidence: match.confidence
+                )
+            }
+        }
 
         return match
     }
@@ -100,7 +143,7 @@ actor PisteIdentificationService {
         }
 
         return PisteInfo(
-            name: match.piste.name ?? "Unknown Piste",
+            name: match.piste.name ?? "Piste \(match.piste.id)",
             difficulty: match.piste.difficulty,
             resort: match.piste.resort,
             confidence: match.score
@@ -174,6 +217,30 @@ actor PisteIdentificationService {
             return 0.0
         }
     }
+
+    private func makeCacheKey(latitude: Double, longitude: Double, radiusMeters: Double) -> String {
+        let latBucket = (latitude * 1000).rounded() / 1000
+        let lonBucket = (longitude * 1000).rounded() / 1000
+        return "\(latBucket),\(lonBucket),r=\(Int(radiusMeters))"
+    }
+
+    private func dominantResortName(in pistes: [OpenStreetMapService.PisteData]) -> String? {
+        var counts: [String: Int] = [:]
+        for piste in pistes {
+            guard let resort = piste.resort?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+                  !resort.isEmpty else {
+                continue
+            }
+            counts[resort, default: 0] += 1
+        }
+        return counts.max { lhs, rhs in
+            if lhs.value == rhs.value {
+                return lhs.key > rhs.key
+            }
+            return lhs.value < rhs.value
+        }?.key
+    }
 }
 
 /// Service for querying OpenStreetMap Overpass API
@@ -209,13 +276,45 @@ actor OpenStreetMapService {
         (
           way["piste:type"="downhill"](around:\(radiusMeters),\(centerLat),\(centerLon));
           way["piste:type"="nordic"](around:\(radiusMeters),\(centerLat),\(centerLon));
+          relation["piste:type"="downhill"](around:\(radiusMeters),\(centerLat),\(centerLon));
+          relation["piste:type"="nordic"](around:\(radiusMeters),\(centerLat),\(centerLon));
         );
-        out body;
+        out body center;
         >;
         out skel qt;
         """
 
+        let data = try await performOverpassQuery(query: query)
+        return try parseOverpassResponse(data)
+    }
+
+    func queryNearestResortName(
+        centerLat: Double,
+        centerLon: Double,
+        radiusMeters: Double
+    ) async throws -> String? {
+        let query = """
+        [out:json][timeout:20];
+        (
+          relation["tourism"="ski_resort"]["name"](around:\(radiusMeters),\(centerLat),\(centerLon));
+          way["landuse"="winter_sports"]["name"](around:\(radiusMeters),\(centerLat),\(centerLon));
+          relation["landuse"="winter_sports"]["name"](around:\(radiusMeters),\(centerLat),\(centerLon));
+          node["place"~"city|town|village|hamlet"]["name"](around:\(radiusMeters),\(centerLat),\(centerLon));
+        );
+        out body center;
+        """
+
+        let data = try await performOverpassQuery(query: query)
+        return try parseNearestResortName(
+            from: data,
+            centerLat: centerLat,
+            centerLon: centerLon
+        )
+    }
+
+    private func performOverpassQuery(query: String) async throws -> Data {
         var errors: [String] = []
+
         for endpoint in overpassURLs {
             var components = URLComponents(string: endpoint)
             components?.queryItems = [URLQueryItem(name: "data", value: query)]
@@ -240,7 +339,7 @@ actor OpenStreetMapService {
                     errors.append("\(endpoint): HTTP \(httpResponse.statusCode)")
                     continue
                 }
-                return try parseOverpassResponse(data)
+                return data
             } catch {
                 errors.append("\(endpoint): \(error.localizedDescription)")
             }
@@ -261,6 +360,12 @@ actor OpenStreetMapService {
                 let lat: Double?
                 let lon: Double?
                 let nodes: [Int64]?
+                let center: Center?
+            }
+
+            struct Center: Codable {
+                let lat: Double
+                let lon: Double
             }
         }
 
@@ -278,7 +383,7 @@ actor OpenStreetMapService {
         // Process ways (pistes)
         var pistes: [PisteData] = []
 
-        for element in response.elements where element.type == "way" {
+        for element in response.elements where element.type == "way" || element.type == "relation" {
             guard let tags = element.tags,
                   tags["piste:type"] != nil else {
                 continue
@@ -289,18 +394,27 @@ actor OpenStreetMapService {
             if let nodes = element.nodes {
                 wayPoints = nodes.compactMap { nodeLookup[$0] }
             }
+            if wayPoints.isEmpty, let center = element.center {
+                wayPoints = [CLLocationCoordinate2D(latitude: center.lat, longitude: center.lon)]
+            }
 
             guard !wayPoints.isEmpty else { continue }
 
-            // Calculate center
-            let centerLat = wayPoints.map { $0.latitude }.reduce(0, +) / Double(wayPoints.count)
-            let centerLon = wayPoints.map { $0.longitude }.reduce(0, +) / Double(wayPoints.count)
+            let centerLat: Double
+            let centerLon: Double
+            if let center = element.center {
+                centerLat = center.lat
+                centerLon = center.lon
+            } else {
+                centerLat = wayPoints.map { $0.latitude }.reduce(0, +) / Double(wayPoints.count)
+                centerLon = wayPoints.map { $0.longitude }.reduce(0, +) / Double(wayPoints.count)
+            }
 
             let piste = PisteData(
                 id: "\(element.id)",
-                name: tags["name"],
+                name: preferredPisteName(from: tags, fallbackID: element.id),
                 difficulty: tags["piste:difficulty"],
-                resort: tags["piste:site"] ?? tags["operator"],
+                resort: preferredResortName(from: tags),
                 centerLat: centerLat,
                 centerLon: centerLon,
                 minAltitude: nil, // OSM doesn't always have altitude
@@ -312,6 +426,119 @@ actor OpenStreetMapService {
         }
 
         return pistes
+    }
+
+    private func preferredPisteName(from tags: [String: String], fallbackID: Int64) -> String {
+        let candidateKeys = [
+            "name",
+            "piste:name",
+            "official_name",
+            "ref",
+            "destination"
+        ]
+        for key in candidateKeys {
+            if let rawValue = tags[key] {
+                let normalized = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !normalized.isEmpty {
+                    return normalized
+                }
+            }
+        }
+        return "Piste \(fallbackID)"
+    }
+
+    private func preferredResortName(from tags: [String: String]) -> String? {
+        let candidateKeys = [
+            "piste:site",
+            "ski_area",
+            "resort",
+            "site"
+        ]
+        for key in candidateKeys {
+            if let rawValue = tags[key] {
+                let normalized = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !normalized.isEmpty {
+                    return normalized
+                }
+            }
+        }
+        return nil
+    }
+
+    private func parseNearestResortName(
+        from data: Data,
+        centerLat: Double,
+        centerLon: Double
+    ) throws -> String? {
+        struct OverpassResponse: Codable {
+            let elements: [Element]
+
+            struct Element: Codable {
+                let type: String
+                let tags: [String: String]?
+                let lat: Double?
+                let lon: Double?
+                let center: Center?
+            }
+
+            struct Center: Codable {
+                let lat: Double
+                let lon: Double
+            }
+        }
+
+        let response = try JSONDecoder().decode(OverpassResponse.self, from: data)
+
+        struct Candidate {
+            let name: String
+            let priority: Int
+            let distance: CLLocationDistance
+        }
+
+        let centerLocation = CLLocation(latitude: centerLat, longitude: centerLon)
+        var candidates: [Candidate] = []
+
+        for element in response.elements {
+            guard let tags = element.tags else { continue }
+            guard let rawName = tags["name"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !rawName.isEmpty else {
+                continue
+            }
+
+            let coordLat: Double
+            let coordLon: Double
+            if let lat = element.lat, let lon = element.lon {
+                coordLat = lat
+                coordLon = lon
+            } else if let center = element.center {
+                coordLat = center.lat
+                coordLon = center.lon
+            } else {
+                continue
+            }
+
+            let location = CLLocation(latitude: coordLat, longitude: coordLon)
+            let distance = centerLocation.distance(from: location)
+
+            let priority: Int
+            if tags["place"] != nil {
+                priority = 0
+            } else if tags["tourism"] == "ski_resort" || tags["landuse"] == "winter_sports" {
+                priority = 1
+            } else {
+                priority = 2
+            }
+
+            candidates.append(Candidate(name: rawName, priority: priority, distance: distance))
+        }
+
+        let best = candidates.sorted { lhs, rhs in
+            if lhs.priority != rhs.priority { return lhs.priority < rhs.priority }
+            if lhs.distance != rhs.distance { return lhs.distance < rhs.distance }
+            return lhs.name < rhs.name
+        }.first
+
+        return best?.name
     }
 }
 

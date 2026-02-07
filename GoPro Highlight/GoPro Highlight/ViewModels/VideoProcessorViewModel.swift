@@ -111,7 +111,7 @@ class VideoProcessorViewModel {
             var loadedVideos: [GoProVideo] = []
             for videoURL in sortedVideoFiles {
                 var video = GoProVideo(url: videoURL)
-                video.captureDate = fileSystemDate(for: videoURL)
+                video.captureDate = nil
                 // Note: File size and duration will be calculated when needed
                 // to keep the initializer simple
                 loadedVideos.append(video)
@@ -138,7 +138,7 @@ class VideoProcessorViewModel {
         progress.addLog("Starting video processing...", level: .info)
         progress.addLog("  → Output mode: \(settings.outputSettings.outputMode.rawValue)")
         progress.addLog("  → Quality: \(settings.outputSettings.quality.rawValue), Format: \(settings.outputSettings.format.rawValue)")
-        progress.addLog("  → Overlays: speed=\(settings.overlaySettings.speedGaugeEnabled), datetime=\(settings.overlaySettings.dateTimeEnabled)")
+        progress.addLog("  → Overlays: speed=\(settings.overlaySettings.speedGaugeEnabled), datetime=\(settings.overlaySettings.dateTimeEnabled), piste=\(settings.overlaySettings.pisteDetailsEnabled)")
         progress.addLog("  → Highlight overlay: \(settings.highlightSettings.includeOverlay), Max-speed overlay: \(settings.maxSpeedSettings.includeOverlay)")
 
         do {
@@ -162,14 +162,23 @@ class VideoProcessorViewModel {
                     let attrs = try FileManager.default.attributesOfItem(atPath: video.url.path)
                     video.fileSize = (attrs[.size] as? Int64) ?? 0
 
-                    if video.captureDate == nil {
-                        video.captureDate = try await extractCaptureDate(from: asset)
-                    }
                     progress.addLog(
                         "  → \(video.filename): duration \(String(format: "%.1f", max(0, video.duration)))s, size \(formatFileSize(video.fileSize))"
                     )
-                    if let captureDate = video.captureDate, isPlausibleCaptureDate(captureDate) {
-                        progress.addLog("  → \(video.filename): capture date \(captureDate.formatted(date: .abbreviated, time: .standard))")
+                    do {
+                        let metadataCaptureDate = try await extractCaptureDate(from: asset)
+                        if let metadataCaptureDate, isPlausibleCaptureDate(metadataCaptureDate) {
+                            video.captureDate = metadataCaptureDate
+                            progress.addLog("  → \(video.filename): capture date \(metadataCaptureDate.formatted(date: .abbreviated, time: .standard)) (metadata)")
+                        } else if let fileDate = fileSystemDate(for: video.url), isPlausibleCaptureDate(fileDate) {
+                            video.captureDate = fileDate
+                            progress.addLog("  → \(video.filename): capture date \(fileDate.formatted(date: .abbreviated, time: .standard)) (filesystem fallback)")
+                        }
+                    } catch {
+                        if let fileDate = fileSystemDate(for: video.url), isPlausibleCaptureDate(fileDate) {
+                            video.captureDate = fileDate
+                            progress.addLog("  → \(video.filename): capture date \(fileDate.formatted(date: .abbreviated, time: .standard)) (filesystem fallback)", level: .warning)
+                        }
                     }
                 } catch {
                     progress.addLog("  → \(video.filename): Could not load duration", level: .warning)
@@ -249,7 +258,8 @@ class VideoProcessorViewModel {
                                     confidence: pisteInfo.confidence
                                 )
                                 videos[index] = video
-                                progress.addLog("  ✓ \(video.filename): \(pisteInfo.name) (confidence: \(Int(pisteInfo.confidence * 100))%)", level: .success)
+                                let resortSuffix = pisteInfo.resort.map { " | \($0)" } ?? ""
+                                progress.addLog("  ✓ \(video.filename): \(pisteInfo.name)\(resortSuffix) (confidence: \(Int(pisteInfo.confidence * 100))%)", level: .success)
                             } else {
                                 progress.addLog("  → \(video.filename): No piste identified", level: .info)
                             }
@@ -326,13 +336,14 @@ class VideoProcessorViewModel {
 
                             // Apply overlays to highlight segments if enabled.
                             if settings.highlightSettings.includeOverlay &&
-                               (settings.overlaySettings.speedGaugeEnabled || settings.overlaySettings.dateTimeEnabled) {
+                               (settings.overlaySettings.speedGaugeEnabled || settings.overlaySettings.dateTimeEnabled || settings.overlaySettings.pisteDetailsEnabled) {
                                 try Task.checkCancellation()
                                 do {
                                     try await applyOverlays(
                                         inputURL: segmentOutputURL,
                                         video: video,
-                                        outputDir: outputDirectory
+                                        outputDir: outputDirectory,
+                                        sourceSegmentStartTime: segment.startTime
                                     )
                                 } catch {
                                     progress.addLog("    ✗ Overlay failed: \(error.localizedDescription)", level: .warning)
@@ -405,13 +416,14 @@ class VideoProcessorViewModel {
 
                         // Apply overlays if needed
                         if settings.maxSpeedSettings.includeOverlay &&
-                           (settings.overlaySettings.speedGaugeEnabled || settings.overlaySettings.dateTimeEnabled) {
+                           (settings.overlaySettings.speedGaugeEnabled || settings.overlaySettings.dateTimeEnabled || settings.overlaySettings.pisteDetailsEnabled) {
                             try Task.checkCancellation()
                             do {
                                 try await applyOverlays(
                                     inputURL: segmentOutputURL,
                                     video: video,
-                                    outputDir: outputDirectory
+                                    outputDir: outputDirectory,
+                                    sourceSegmentStartTime: segment.startTime
                                 )
                             } catch {
                                 progress.addLog("  ✗ Overlay failed: \(error.localizedDescription)", level: .warning)
@@ -561,20 +573,26 @@ class VideoProcessorViewModel {
     private func applyOverlays(
         inputURL: URL,
         video: GoProVideo,
-        outputDir: URL
+        outputDir: URL,
+        sourceSegmentStartTime: TimeInterval
     ) async throws {
         progress.addLog("    → Applying overlays...")
         progress.addLog(
-            "      → telemetry samples: \(video.telemetry?.speedSamples.count ?? 0), speedGauge=\(settings.overlaySettings.speedGaugeEnabled), dateTime=\(settings.overlaySettings.dateTimeEnabled)"
+            "      → telemetry samples: \(video.telemetry?.speedSamples.count ?? 0), speedGauge=\(settings.overlaySettings.speedGaugeEnabled), dateTime=\(settings.overlaySettings.dateTimeEnabled), piste=\(settings.overlaySettings.pisteDetailsEnabled)"
         )
+        progress.addLog("      → segment start: \(String(format: "%.2f", sourceSegmentStartTime))s")
         if settings.overlaySettings.speedGaugeEnabled {
             progress.addLog(
-                "      → gauge settings: pos=\(settings.overlaySettings.gaugePosition.rawValue), max=\(Int(settings.overlaySettings.maxSpeed)) \(settings.overlaySettings.speedUnits.rawValue), opacity=\(Int(settings.overlaySettings.gaugeOpacity * 100))%"
+                "      → gauge settings: pos=\(settings.overlaySettings.gaugePosition.rawValue), max=\(Int(settings.overlaySettings.maxSpeed)) \(settings.overlaySettings.speedUnits.rawValue), size=\(Int(settings.overlaySettings.gaugeScale * 100))%, opacity=\(Int(settings.overlaySettings.gaugeOpacity * 100))%"
             )
         }
         if settings.overlaySettings.dateTimeEnabled {
             let overlayDate = video.captureDate ?? Date()
             progress.addLog("      → date/time text: \(settings.overlaySettings.dateTimeFormat.format(date: overlayDate))")
+        }
+        if settings.overlaySettings.pisteDetailsEnabled {
+            let pisteText = video.pisteInfo.map { "\($0.name) | \($0.resort ?? "Unknown resort")" } ?? "No piste data"
+            progress.addLog("      → piste text: \(pisteText)")
         }
 
         let overlayFilename = "\(inputURL.deletingPathExtension().lastPathComponent)_overlay"
@@ -586,7 +604,9 @@ class VideoProcessorViewModel {
             inputURL: inputURL,
             outputURL: overlayOutputURL,
             telemetry: video.telemetry,
+            pisteInfo: video.pisteInfo,
             videoStartDate: video.captureDate,
+            sourceSegmentStartTime: sourceSegmentStartTime,
             overlaySettings: settings.overlaySettings,
             quality: settings.outputSettings.quality
         )
@@ -632,9 +652,28 @@ class VideoProcessorViewModel {
     }
 
     private func extractCaptureDate(from asset: AVAsset) async throws -> Date? {
+        if let creationDateItem = try await asset.load(.creationDate) {
+            if let directDate = creationDateItem.dateValue, isPlausibleCaptureDate(directDate) {
+                return directDate
+            }
+            if let dateString = creationDateItem.stringValue,
+               let parsedDate = parseMetadataDateString(dateString),
+               isPlausibleCaptureDate(parsedDate) {
+                return parsedDate
+            }
+        }
+
         let commonMetadata = try await asset.load(.commonMetadata)
         if let date = metadataDate(from: commonMetadata) {
             return date
+        }
+
+        let metadataFormats = try await asset.load(.availableMetadataFormats)
+        for format in metadataFormats {
+            let items = asset.metadata(forFormat: format)
+            if let date = metadataDate(from: items) {
+                return date
+            }
         }
 
         let fullMetadata = try await asset.load(.metadata)
@@ -654,26 +693,38 @@ class VideoProcessorViewModel {
     }
 
     private func parseMetadataDateString(_ dateString: String) -> Date? {
-        let isoFormatter = ISO8601DateFormatter()
-        isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = isoFormatter.date(from: dateString) {
+        let normalized = dateString.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let isoWithFractional = ISO8601DateFormatter()
+        isoWithFractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = isoWithFractional.date(from: normalized) {
             return date
         }
 
-        let fallbackISO = ISO8601DateFormatter()
-        if let date = fallbackISO.date(from: dateString) {
+        let iso = ISO8601DateFormatter()
+        if let date = iso.date(from: normalized) {
             return date
         }
 
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
-        if let date = formatter.date(from: dateString) {
-            return date
+
+        let formats = [
+            "yyyy-MM-dd HH:mm:ss",
+            "yyyy-MM-dd'T'HH:mm:ssZ",
+            "yyyy-MM-dd'T'HH:mm:ssXXXXX",
+            "yyyy-MM-dd'T'HH:mm:ss.SSSZ",
+            "yyyy:MM:dd HH:mm:ss"
+        ]
+
+        for format in formats {
+            formatter.dateFormat = format
+            if let date = formatter.date(from: normalized) {
+                return date
+            }
         }
 
-        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ssZ"
-        return formatter.date(from: dateString)
+        return nil
     }
 
     private func sortSegmentsForStitching(_ segments: [VideoStitchService.SegmentFile]) -> [VideoStitchService.SegmentFile] {

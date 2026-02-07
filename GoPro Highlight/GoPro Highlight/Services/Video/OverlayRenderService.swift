@@ -22,7 +22,9 @@ actor OverlayRenderService {
         inputURL: URL,
         outputURL: URL,
         telemetry: Telemetry?,
+        pisteInfo: PisteInfoData?,
         videoStartDate: Date?,
+        sourceSegmentStartTime: TimeInterval = 0,
         overlaySettings: ExportSettings.OverlaySettings,
         quality: ExportSettings.OutputSettings.ExportQuality,
         onProgress: @escaping (Double) -> Void = { _ in }
@@ -99,11 +101,12 @@ actor OverlayRenderService {
 
         // Add speed gauge overlay if enabled
         if overlaySettings.speedGaugeEnabled, let telemetry = telemetry {
-            let gaugeLayer = try createSpeedGaugeLayer(
+            let gaugeLayer = createSpeedGaugeLayer(
                 size: videoComposition.renderSize,
                 telemetry: telemetry,
                 settings: overlaySettings,
-                duration: duration
+                duration: duration,
+                sourceSegmentStartTime: sourceSegmentStartTime
             )
             overlayLayer.addSublayer(gaugeLayer)
         }
@@ -116,6 +119,15 @@ actor OverlayRenderService {
                 videoStartDate: videoStartDate ?? Date()
             )
             overlayLayer.addSublayer(dateTimeLayer)
+        }
+
+        if overlaySettings.pisteDetailsEnabled, let pisteInfo {
+            let pisteLayer = createPisteDetailsLayer(
+                size: videoComposition.renderSize,
+                settings: overlaySettings,
+                pisteInfo: pisteInfo
+            )
+            overlayLayer.addSublayer(pisteLayer)
         }
 
         // Create animation tool
@@ -150,91 +162,276 @@ actor OverlayRenderService {
         size: CGSize,
         telemetry: Telemetry,
         settings: ExportSettings.OverlaySettings,
-        duration: CMTime
-    ) throws -> CALayer {
-        let gaugeSize: CGFloat = 200
+        duration: CMTime,
+        sourceSegmentStartTime: TimeInterval
+    ) -> CALayer {
+        let clipDuration = max(CMTimeGetSeconds(duration), 0)
+        let unitMultiplier = settings.speedUnits == .mph ? 2.23694 : 3.6
+        let gaugeScale = max(0.6, min(2.0, settings.gaugeScale))
+        let gaugeSize: CGFloat = 220 * CGFloat(gaugeScale)
         let position = calculatePosition(for: settings.gaugePosition, in: size, overlaySize: gaugeSize)
+        let center = CGPoint(x: gaugeSize / 2, y: gaugeSize / 2)
+        let radius = gaugeSize * 0.42
+        let maxDisplaySpeed = max(settings.maxSpeed, 1)
 
         let gaugeLayer = CALayer()
-        gaugeLayer.frame = CGRect(x: position.x - gaugeSize/2, y: position.y - gaugeSize/2, width: gaugeSize, height: gaugeSize)
+        gaugeLayer.frame = CGRect(x: position.x - gaugeSize / 2, y: position.y - gaugeSize / 2, width: gaugeSize, height: gaugeSize)
         gaugeLayer.opacity = Float(settings.gaugeOpacity)
 
-        // Create gauge background
         let panelLayer = CAShapeLayer()
-        panelLayer.frame = CGRect(x: 0, y: 0, width: gaugeSize, height: gaugeSize)
-        panelLayer.path = CGPath(ellipseIn: CGRect(x: gaugeSize * 0.08, y: gaugeSize * 0.08, width: gaugeSize * 0.84, height: gaugeSize * 0.84), transform: nil)
-        panelLayer.fillColor = NSColor.black.withAlphaComponent(0.28).cgColor
-        panelLayer.strokeColor = NSColor.clear.cgColor
+        panelLayer.path = CGPath(
+            ellipseIn: CGRect(
+                x: center.x - radius * 1.05,
+                y: center.y - radius * 1.05,
+                width: radius * 2.1,
+                height: radius * 2.1
+            ),
+            transform: nil
+        )
+        panelLayer.fillColor = NSColor.black.withAlphaComponent(0.35).cgColor
         gaugeLayer.addSublayer(panelLayer)
 
-        let backgroundLayer = CAShapeLayer()
-        backgroundLayer.frame = CGRect(x: 0, y: 0, width: gaugeSize, height: gaugeSize)
+        let trackLayer = CAShapeLayer()
+        trackLayer.path = CGPath(
+            ellipseIn: CGRect(
+                x: center.x - radius * 0.82,
+                y: center.y - radius * 0.82,
+                width: radius * 1.64,
+                height: radius * 1.64
+            ),
+            transform: nil
+        )
+        trackLayer.fillColor = NSColor.clear.cgColor
+        trackLayer.strokeColor = NSColor.white.withAlphaComponent(0.35).cgColor
+        trackLayer.lineWidth = 8
+        trackLayer.lineCap = .round
+        trackLayer.strokeStart = 0
+        trackLayer.strokeEnd = 0.5
+        gaugeLayer.addSublayer(trackLayer)
 
-        // Semi-circular gauge path
-        let center = CGPoint(x: gaugeSize / 2, y: gaugeSize / 2)
-        let radius = gaugeSize * 0.4
-
-        let gaugePath = CGMutablePath()
-        gaugePath.addArc(center: center, radius: radius, startAngle: .pi, endAngle: 0, clockwise: false)
-
-        backgroundLayer.path = gaugePath
-        backgroundLayer.strokeColor = NSColor.white.withAlphaComponent(0.3).cgColor
-        backgroundLayer.fillColor = NSColor.clear.cgColor
-        backgroundLayer.lineWidth = 20
-
-        gaugeLayer.addSublayer(backgroundLayer)
-
-        // Create animated speed indicator layer
-        // This is a simplified version - full implementation would animate based on telemetry
         let needleLayer = CAShapeLayer()
-        needleLayer.frame = backgroundLayer.frame
-
-        // TODO: Animate needle based on speed samples over time
-        // For now, show the peak speed in the segment.
-        let peakSpeedMps = telemetry.speedSamples.map(\.speed).max() ?? 0
-        let peakSpeedDisplay = settings.speedUnits == .mph ? peakSpeedMps * 2.23694 : peakSpeedMps * 3.6
-        let maxDisplaySpeed = max(settings.maxSpeed, 1)
-        let normalizedSpeed = min(max(peakSpeedDisplay / maxDisplaySpeed, 0), 1)
-        let angle = CGFloat(.pi - normalizedSpeed * .pi)
-
-        let needlePath = CGMutablePath()
-        needlePath.move(to: center)
-        needlePath.addLine(to: CGPoint(
-            x: center.x + cos(angle) * radius * 0.8,
-            y: center.y - sin(angle) * radius * 0.8
-        ))
-
-        needleLayer.path = needlePath
+        needleLayer.frame = gaugeLayer.bounds
+        needleLayer.fillColor = NSColor.clear.cgColor
         needleLayer.strokeColor = NSColor.systemBlue.cgColor
-        needleLayer.lineWidth = 4
+        needleLayer.lineWidth = 8
         needleLayer.lineCap = .round
-
         gaugeLayer.addSublayer(needleLayer)
 
-        // Add speed text
-        let speedTextLayer = CATextLayer()
-        speedTextLayer.frame = CGRect(x: 0, y: gaugeSize * 0.6, width: gaugeSize, height: 40)
-        speedTextLayer.string = String(format: "%.0f", peakSpeedDisplay)
-        speedTextLayer.font = NSFont.boldSystemFont(ofSize: 32)
-        speedTextLayer.fontSize = 32
-        speedTextLayer.foregroundColor = NSColor.white.cgColor
-        speedTextLayer.alignmentMode = .center
-        speedTextLayer.contentsScale = 2.0 // Retina
+        let hubLayer = CAShapeLayer()
+        hubLayer.path = CGPath(
+            ellipseIn: CGRect(x: center.x - 6, y: center.y - 6, width: 12, height: 12),
+            transform: nil
+        )
+        hubLayer.fillColor = NSColor.white.cgColor
+        gaugeLayer.addSublayer(hubLayer)
 
+        let speedTextFrame = CGRect(
+            x: 0,
+            y: gaugeSize * 0.62,
+            width: gaugeSize,
+            height: gaugeSize * 0.22
+        )
+        let speedTextLayer = CALayer()
+        speedTextLayer.frame = speedTextFrame
+        speedTextLayer.contentsGravity = .center
+        speedTextLayer.contentsScale = 2.0
         gaugeLayer.addSublayer(speedTextLayer)
 
-        // Add unit label
-        let unitLabel = CATextLayer()
-        unitLabel.frame = CGRect(x: 0, y: gaugeSize * 0.7, width: gaugeSize, height: 20)
-        unitLabel.string = settings.speedUnits.rawValue
-        unitLabel.fontSize = 14
-        unitLabel.foregroundColor = NSColor.white.withAlphaComponent(0.7).cgColor
-        unitLabel.alignmentMode = .center
-        unitLabel.contentsScale = 2.0
+        let samples = makeGaugeTimelineSamples(
+            telemetry: telemetry,
+            sourceSegmentStartTime: sourceSegmentStartTime,
+            clipDuration: clipDuration,
+            unitMultiplier: unitMultiplier
+        )
 
-        gaugeLayer.addSublayer(unitLabel)
+        guard let firstSample = samples.first else {
+            return gaugeLayer
+        }
+
+        needleLayer.path = makeNeedlePath(
+            speedValue: firstSample.displaySpeed,
+            maxSpeedValue: maxDisplaySpeed,
+            gaugeSize: gaugeSize
+        )
+        let firstSpeedImage = makeTextImage(
+            text: speedGaugeLabel(for: firstSample.displaySpeed, unitText: settings.speedUnits.rawValue),
+            fontName: "Helvetica-Bold",
+            fontSize: max(24, gaugeSize * 0.13),
+            color: NSColor.white,
+            canvasSize: speedTextFrame.size
+        )
+        speedTextLayer.contents = firstSpeedImage
+
+        if clipDuration > 0, samples.count > 1 {
+            let keyTimes = samples.map { NSNumber(value: $0.relativeTime / clipDuration) }
+            let needlePaths = samples.map {
+                makeNeedlePath(
+                    speedValue: $0.displaySpeed,
+                    maxSpeedValue: maxDisplaySpeed,
+                    gaugeSize: gaugeSize
+                ) as Any
+            }
+
+            let needleAnimation = CAKeyframeAnimation(keyPath: "path")
+            needleAnimation.values = needlePaths
+            needleAnimation.keyTimes = keyTimes
+            needleAnimation.duration = clipDuration
+            needleAnimation.beginTime = AVCoreAnimationBeginTimeAtZero
+            needleAnimation.calculationMode = .linear
+            needleAnimation.isRemovedOnCompletion = false
+            needleAnimation.fillMode = .forwards
+            needleLayer.add(needleAnimation, forKey: "needlePathAnimation")
+
+            if let firstSpeedImage {
+                let speedValues = samples.map { Int($0.displaySpeed.rounded()) }
+                var speedImagesByValue: [Int: CGImage] = [:]
+                let speedImages = speedValues.map { value -> Any in
+                    if let image = speedImagesByValue[value] {
+                        return image
+                    }
+                    let image = makeTextImage(
+                        text: speedGaugeLabel(for: Double(value), unitText: settings.speedUnits.rawValue),
+                        fontName: "Helvetica-Bold",
+                        fontSize: max(24, gaugeSize * 0.13),
+                        color: NSColor.white,
+                        canvasSize: speedTextFrame.size
+                    ) ?? firstSpeedImage
+                    speedImagesByValue[value] = image
+                    return image
+                }
+
+                let textAnimation = CAKeyframeAnimation(keyPath: "contents")
+                textAnimation.values = speedImages
+                textAnimation.keyTimes = keyTimes
+                textAnimation.duration = clipDuration
+                textAnimation.beginTime = AVCoreAnimationBeginTimeAtZero
+                textAnimation.calculationMode = .discrete
+                textAnimation.isRemovedOnCompletion = false
+                textAnimation.fillMode = .forwards
+                speedTextLayer.add(textAnimation, forKey: "speedTextAnimation")
+            }
+        }
 
         return gaugeLayer
+    }
+
+    private struct GaugeSample {
+        let relativeTime: TimeInterval
+        let displaySpeed: Double
+    }
+
+    private func makeGaugeTimelineSamples(
+        telemetry: Telemetry,
+        sourceSegmentStartTime: TimeInterval,
+        clipDuration: TimeInterval,
+        unitMultiplier: Double
+    ) -> [GaugeSample] {
+        guard !telemetry.speedSamples.isEmpty else {
+            return [GaugeSample(relativeTime: 0, displaySpeed: 0)]
+        }
+
+        let samples = telemetry.speedSamples.sorted { $0.timestamp < $1.timestamp }
+        let segmentStart = max(0, sourceSegmentStartTime)
+        let segmentEnd = segmentStart + max(clipDuration, 0)
+        let eps = 0.001
+
+        let inRange = samples.filter { sample in
+            sample.timestamp >= segmentStart - eps && sample.timestamp <= segmentEnd + eps
+        }
+
+        var timeline: [GaugeSample] = []
+        timeline.reserveCapacity(max(inRange.count + 2, 2))
+
+        let startSpeed = interpolateSpeed(at: segmentStart, samples: samples) * unitMultiplier
+        timeline.append(GaugeSample(relativeTime: 0, displaySpeed: startSpeed))
+
+        for sample in inRange {
+            let relative = max(0, min(clipDuration, sample.timestamp - segmentStart))
+            timeline.append(GaugeSample(relativeTime: relative, displaySpeed: sample.speed * unitMultiplier))
+        }
+
+        if clipDuration > 0 {
+            let endSpeed = interpolateSpeed(at: segmentEnd, samples: samples) * unitMultiplier
+            timeline.append(GaugeSample(relativeTime: clipDuration, displaySpeed: endSpeed))
+        }
+
+        timeline.sort { lhs, rhs in
+            if lhs.relativeTime == rhs.relativeTime {
+                return lhs.displaySpeed < rhs.displaySpeed
+            }
+            return lhs.relativeTime < rhs.relativeTime
+        }
+
+        var deduped: [GaugeSample] = []
+        deduped.reserveCapacity(timeline.count)
+        for sample in timeline {
+            if let last = deduped.last, abs(last.relativeTime - sample.relativeTime) < 0.0005 {
+                deduped[deduped.count - 1] = sample
+            } else {
+                deduped.append(sample)
+            }
+        }
+
+        let maxKeyframes = 450
+        if deduped.count <= maxKeyframes {
+            return deduped
+        }
+
+        var compressed: [GaugeSample] = []
+        compressed.reserveCapacity(maxKeyframes)
+        let denominator = max(maxKeyframes - 1, 1)
+        for index in 0..<maxKeyframes {
+            let originalIndex = Int(round(Double(index) * Double(deduped.count - 1) / Double(denominator)))
+            compressed.append(deduped[min(originalIndex, deduped.count - 1)])
+        }
+        return compressed
+    }
+
+    private func interpolateSpeed(
+        at timestamp: TimeInterval,
+        samples: [Telemetry.SpeedSample]
+    ) -> Double {
+        guard let first = samples.first else { return 0 }
+        if timestamp <= first.timestamp { return first.speed }
+        guard let last = samples.last else { return first.speed }
+        if timestamp >= last.timestamp { return last.speed }
+
+        for idx in 1..<samples.count {
+            let left = samples[idx - 1]
+            let right = samples[idx]
+            if timestamp <= right.timestamp {
+                let delta = right.timestamp - left.timestamp
+                if delta <= 0 { return right.speed }
+                let factor = (timestamp - left.timestamp) / delta
+                return left.speed + (right.speed - left.speed) * factor
+            }
+        }
+
+        return last.speed
+    }
+
+    private func makeNeedlePath(
+        speedValue: Double,
+        maxSpeedValue: Double,
+        gaugeSize: CGFloat
+    ) -> CGPath {
+        let center = CGPoint(x: gaugeSize / 2, y: gaugeSize / 2)
+        let radius = gaugeSize * 0.42
+        let normalized = min(max(speedValue / max(maxSpeedValue, 1), 0), 1)
+        let angle = CGFloat.pi - CGFloat(normalized) * CGFloat.pi
+        let endPoint = CGPoint(
+            x: center.x + cos(angle) * radius * 0.72,
+            y: center.y + sin(angle) * radius * 0.72
+        )
+
+        let path = CGMutablePath()
+        path.move(to: center)
+        path.addLine(to: endPoint)
+        return path
+    }
+
+    private func speedGaugeLabel(for speed: Double, unitText: String) -> String {
+        "\(Int(speed.rounded())) \(unitText)"
     }
 
     // MARK: - Date/Time Layer
@@ -299,6 +496,63 @@ actor OverlayRenderService {
         container.addSublayer(backgroundLayer)
         container.addSublayer(textLayer)
 
+        return container
+    }
+
+    private func createPisteDetailsLayer(
+        size: CGSize,
+        settings: ExportSettings.OverlaySettings,
+        pisteInfo: PisteInfoData
+    ) -> CALayer {
+        let resort = pisteInfo.resort?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resortText = (resort?.isEmpty == false) ? (resort ?? "Unknown resort") : "Unknown resort"
+        let text = "\(pisteInfo.name) | \(resortText)"
+
+        let font = NSFont.systemFont(ofSize: settings.pisteDetailsFontSize, weight: .semibold)
+        let attributes: [NSAttributedString.Key: Any] = [.font: font]
+        let textSize = (text as NSString).size(withAttributes: attributes)
+
+        let padding: CGFloat = 16
+        let layerWidth = max(140, textSize.width + padding * 2)
+        let layerHeight = max(36, textSize.height + padding)
+
+        let position = calculatePosition(
+            for: settings.pisteDetailsPosition,
+            in: size,
+            overlaySize: max(layerWidth, layerHeight)
+        )
+        let containerFrame = CGRect(
+            x: position.x - layerWidth / 2,
+            y: position.y - layerHeight / 2,
+            width: layerWidth,
+            height: layerHeight
+        )
+
+        let backgroundLayer = CALayer()
+        backgroundLayer.frame = CGRect(origin: .zero, size: containerFrame.size)
+        backgroundLayer.backgroundColor = NSColor.black.withAlphaComponent(0.5).cgColor
+        backgroundLayer.cornerRadius = 8
+        backgroundLayer.opacity = Float(settings.pisteDetailsOpacity)
+
+        let textLayer = CALayer()
+        textLayer.frame = CGRect(origin: .zero, size: containerFrame.size).insetBy(dx: padding, dy: padding / 2)
+        textLayer.contentsGravity = .center
+        textLayer.contentsScale = 2.0
+        textLayer.opacity = Float(settings.pisteDetailsOpacity)
+        if let textImage = makeTextImage(
+            text: text,
+            fontName: font.fontName,
+            fontSize: CGFloat(settings.pisteDetailsFontSize),
+            color: NSColor.white,
+            canvasSize: textLayer.bounds.size
+        ) {
+            textLayer.contents = textImage
+        }
+
+        let container = CALayer()
+        container.frame = containerFrame
+        container.addSublayer(backgroundLayer)
+        container.addSublayer(textLayer)
         return container
     }
 

@@ -42,6 +42,7 @@ struct ExportSettings: Codable, Sendable, Equatable {
     struct OverlaySettings: Codable, Sendable, Equatable {
         var speedGaugeEnabled: Bool = true
         var dateTimeEnabled: Bool = true
+        var pisteDetailsEnabled: Bool = false
 
         // Speed Gauge Settings
         var gaugeStyle: GaugeStyle = .semiCircular
@@ -49,12 +50,18 @@ struct ExportSettings: Codable, Sendable, Equatable {
         var speedUnits: SpeedUnit = .kmh
         var gaugePosition: OverlayPosition = .bottomRight
         var gaugeOpacity: Double = 0.9
+        var gaugeScale: Double = 1.0
 
         // Date/Time Settings
         var dateTimeFormat: DateTimeFormat = .both
         var dateTimePosition: OverlayPosition = .bottomLeft
         var dateTimeFontSize: Double = 24.0
         var dateTimeOpacity: Double = 0.9
+
+        // Piste Details Settings
+        var pisteDetailsPosition: OverlayPosition = .topLeft
+        var pisteDetailsFontSize: Double = 22.0
+        var pisteDetailsOpacity: Double = 0.9
 
         enum GaugeStyle: String, Codable, CaseIterable, Sendable {
             case semiCircular = "Semi-Circular"
@@ -106,6 +113,73 @@ struct ExportSettings: Codable, Sendable, Equatable {
                 case .center: return (0.5, 0.5)
                 }
             }
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case speedGaugeEnabled
+            case dateTimeEnabled
+            case pisteDetailsEnabled
+            case gaugeStyle
+            case maxSpeed
+            case speedUnits
+            case gaugePosition
+            case gaugeOpacity
+            case gaugeScale
+            case dateTimeFormat
+            case dateTimePosition
+            case dateTimeFontSize
+            case dateTimeOpacity
+            case pisteDetailsPosition
+            case pisteDetailsFontSize
+            case pisteDetailsOpacity
+        }
+
+        init() {}
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            speedGaugeEnabled = try container.decodeIfPresent(Bool.self, forKey: .speedGaugeEnabled) ?? true
+            dateTimeEnabled = try container.decodeIfPresent(Bool.self, forKey: .dateTimeEnabled) ?? true
+            pisteDetailsEnabled = try container.decodeIfPresent(Bool.self, forKey: .pisteDetailsEnabled) ?? false
+
+            gaugeStyle = try container.decodeIfPresent(GaugeStyle.self, forKey: .gaugeStyle) ?? .semiCircular
+            maxSpeed = try container.decodeIfPresent(Double.self, forKey: .maxSpeed) ?? 150.0
+            speedUnits = try container.decodeIfPresent(SpeedUnit.self, forKey: .speedUnits) ?? .kmh
+            gaugePosition = try container.decodeIfPresent(OverlayPosition.self, forKey: .gaugePosition) ?? .bottomRight
+            gaugeOpacity = try container.decodeIfPresent(Double.self, forKey: .gaugeOpacity) ?? 0.9
+            gaugeScale = try container.decodeIfPresent(Double.self, forKey: .gaugeScale) ?? 1.0
+
+            dateTimeFormat = try container.decodeIfPresent(DateTimeFormat.self, forKey: .dateTimeFormat) ?? .both
+            dateTimePosition = try container.decodeIfPresent(OverlayPosition.self, forKey: .dateTimePosition) ?? .bottomLeft
+            dateTimeFontSize = try container.decodeIfPresent(Double.self, forKey: .dateTimeFontSize) ?? 24.0
+            dateTimeOpacity = try container.decodeIfPresent(Double.self, forKey: .dateTimeOpacity) ?? 0.9
+
+            pisteDetailsPosition = try container.decodeIfPresent(OverlayPosition.self, forKey: .pisteDetailsPosition) ?? .topLeft
+            pisteDetailsFontSize = try container.decodeIfPresent(Double.self, forKey: .pisteDetailsFontSize) ?? 22.0
+            pisteDetailsOpacity = try container.decodeIfPresent(Double.self, forKey: .pisteDetailsOpacity) ?? 0.9
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(speedGaugeEnabled, forKey: .speedGaugeEnabled)
+            try container.encode(dateTimeEnabled, forKey: .dateTimeEnabled)
+            try container.encode(pisteDetailsEnabled, forKey: .pisteDetailsEnabled)
+
+            try container.encode(gaugeStyle, forKey: .gaugeStyle)
+            try container.encode(maxSpeed, forKey: .maxSpeed)
+            try container.encode(speedUnits, forKey: .speedUnits)
+            try container.encode(gaugePosition, forKey: .gaugePosition)
+            try container.encode(gaugeOpacity, forKey: .gaugeOpacity)
+            try container.encode(gaugeScale, forKey: .gaugeScale)
+
+            try container.encode(dateTimeFormat, forKey: .dateTimeFormat)
+            try container.encode(dateTimePosition, forKey: .dateTimePosition)
+            try container.encode(dateTimeFontSize, forKey: .dateTimeFontSize)
+            try container.encode(dateTimeOpacity, forKey: .dateTimeOpacity)
+
+            try container.encode(pisteDetailsPosition, forKey: .pisteDetailsPosition)
+            try container.encode(pisteDetailsFontSize, forKey: .pisteDetailsFontSize)
+            try container.encode(pisteDetailsOpacity, forKey: .pisteDetailsOpacity)
         }
     }
 
