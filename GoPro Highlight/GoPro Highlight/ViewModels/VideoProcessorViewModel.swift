@@ -583,7 +583,7 @@ class VideoProcessorViewModel {
         progress.addLog("      → segment start: \(String(format: "%.2f", sourceSegmentStartTime))s")
         if settings.overlaySettings.speedGaugeEnabled {
             progress.addLog(
-                "      → gauge settings: pos=\(settings.overlaySettings.gaugePosition.rawValue), max=\(Int(settings.overlaySettings.maxSpeed)) \(settings.overlaySettings.speedUnits.rawValue), size=\(Int(settings.overlaySettings.gaugeScale * 100))%, opacity=\(Int(settings.overlaySettings.gaugeOpacity * 100))%"
+                "      → gauge settings: style=\(settings.overlaySettings.gaugeStyle.rawValue), pos=\(settings.overlaySettings.gaugePosition.rawValue), max=\(Int(settings.overlaySettings.maxSpeed)) \(settings.overlaySettings.speedUnits.rawValue), size=\(Int(settings.overlaySettings.gaugeScale * 100))%, opacity=\(Int(settings.overlaySettings.gaugeOpacity * 100))%"
             )
         }
         if settings.overlaySettings.dateTimeEnabled {

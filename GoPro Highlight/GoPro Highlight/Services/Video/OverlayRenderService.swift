@@ -167,75 +167,7 @@ actor OverlayRenderService {
     ) -> CALayer {
         let clipDuration = max(CMTimeGetSeconds(duration), 0)
         let unitMultiplier = settings.speedUnits == .mph ? 2.23694 : 3.6
-        let gaugeScale = max(0.6, min(2.0, settings.gaugeScale))
-        let gaugeSize: CGFloat = 220 * CGFloat(gaugeScale)
-        let position = calculatePosition(for: settings.gaugePosition, in: size, overlaySize: gaugeSize)
-        let center = CGPoint(x: gaugeSize / 2, y: gaugeSize / 2)
-        let radius = gaugeSize * 0.42
         let maxDisplaySpeed = max(settings.maxSpeed, 1)
-
-        let gaugeLayer = CALayer()
-        gaugeLayer.frame = CGRect(x: position.x - gaugeSize / 2, y: position.y - gaugeSize / 2, width: gaugeSize, height: gaugeSize)
-        gaugeLayer.opacity = Float(settings.gaugeOpacity)
-
-        let panelLayer = CAShapeLayer()
-        panelLayer.path = CGPath(
-            ellipseIn: CGRect(
-                x: center.x - radius * 1.05,
-                y: center.y - radius * 1.05,
-                width: radius * 2.1,
-                height: radius * 2.1
-            ),
-            transform: nil
-        )
-        panelLayer.fillColor = NSColor.black.withAlphaComponent(0.35).cgColor
-        gaugeLayer.addSublayer(panelLayer)
-
-        let trackLayer = CAShapeLayer()
-        trackLayer.path = CGPath(
-            ellipseIn: CGRect(
-                x: center.x - radius * 0.82,
-                y: center.y - radius * 0.82,
-                width: radius * 1.64,
-                height: radius * 1.64
-            ),
-            transform: nil
-        )
-        trackLayer.fillColor = NSColor.clear.cgColor
-        trackLayer.strokeColor = NSColor.white.withAlphaComponent(0.35).cgColor
-        trackLayer.lineWidth = 8
-        trackLayer.lineCap = .round
-        trackLayer.strokeStart = 0
-        trackLayer.strokeEnd = 0.5
-        gaugeLayer.addSublayer(trackLayer)
-
-        let needleLayer = CAShapeLayer()
-        needleLayer.frame = gaugeLayer.bounds
-        needleLayer.fillColor = NSColor.clear.cgColor
-        needleLayer.strokeColor = NSColor.systemBlue.cgColor
-        needleLayer.lineWidth = 8
-        needleLayer.lineCap = .round
-        gaugeLayer.addSublayer(needleLayer)
-
-        let hubLayer = CAShapeLayer()
-        hubLayer.path = CGPath(
-            ellipseIn: CGRect(x: center.x - 6, y: center.y - 6, width: 12, height: 12),
-            transform: nil
-        )
-        hubLayer.fillColor = NSColor.white.cgColor
-        gaugeLayer.addSublayer(hubLayer)
-
-        let speedTextFrame = CGRect(
-            x: 0,
-            y: gaugeSize * 0.62,
-            width: gaugeSize,
-            height: gaugeSize * 0.22
-        )
-        let speedTextLayer = CALayer()
-        speedTextLayer.frame = speedTextFrame
-        speedTextLayer.contentsGravity = .center
-        speedTextLayer.contentsScale = 2.0
-        gaugeLayer.addSublayer(speedTextLayer)
 
         let samples = makeGaugeTimelineSamples(
             telemetry: telemetry,
@@ -244,75 +176,34 @@ actor OverlayRenderService {
             unitMultiplier: unitMultiplier
         )
 
-        guard let firstSample = samples.first else {
-            return gaugeLayer
+        switch settings.gaugeStyle {
+        case .linear:
+            return createLinearSpeedGaugeLayer(
+                size: size,
+                settings: settings,
+                samples: samples,
+                clipDuration: clipDuration,
+                maxDisplaySpeed: maxDisplaySpeed
+            )
+        case .fullCircular:
+            return createRadialSpeedGaugeLayer(
+                size: size,
+                settings: settings,
+                samples: samples,
+                clipDuration: clipDuration,
+                maxDisplaySpeed: maxDisplaySpeed,
+                fullCircle: true
+            )
+        case .semiCircular:
+            return createRadialSpeedGaugeLayer(
+                size: size,
+                settings: settings,
+                samples: samples,
+                clipDuration: clipDuration,
+                maxDisplaySpeed: maxDisplaySpeed,
+                fullCircle: false
+            )
         }
-
-        needleLayer.path = makeNeedlePath(
-            speedValue: firstSample.displaySpeed,
-            maxSpeedValue: maxDisplaySpeed,
-            gaugeSize: gaugeSize
-        )
-        let firstSpeedImage = makeTextImage(
-            text: speedGaugeLabel(for: firstSample.displaySpeed, unitText: settings.speedUnits.rawValue),
-            fontName: "Helvetica-Bold",
-            fontSize: max(24, gaugeSize * 0.13),
-            color: NSColor.white,
-            canvasSize: speedTextFrame.size
-        )
-        speedTextLayer.contents = firstSpeedImage
-
-        if clipDuration > 0, samples.count > 1 {
-            let keyTimes = samples.map { NSNumber(value: $0.relativeTime / clipDuration) }
-            let needlePaths = samples.map {
-                makeNeedlePath(
-                    speedValue: $0.displaySpeed,
-                    maxSpeedValue: maxDisplaySpeed,
-                    gaugeSize: gaugeSize
-                ) as Any
-            }
-
-            let needleAnimation = CAKeyframeAnimation(keyPath: "path")
-            needleAnimation.values = needlePaths
-            needleAnimation.keyTimes = keyTimes
-            needleAnimation.duration = clipDuration
-            needleAnimation.beginTime = AVCoreAnimationBeginTimeAtZero
-            needleAnimation.calculationMode = .linear
-            needleAnimation.isRemovedOnCompletion = false
-            needleAnimation.fillMode = .forwards
-            needleLayer.add(needleAnimation, forKey: "needlePathAnimation")
-
-            if let firstSpeedImage {
-                let speedValues = samples.map { Int($0.displaySpeed.rounded()) }
-                var speedImagesByValue: [Int: CGImage] = [:]
-                let speedImages = speedValues.map { value -> Any in
-                    if let image = speedImagesByValue[value] {
-                        return image
-                    }
-                    let image = makeTextImage(
-                        text: speedGaugeLabel(for: Double(value), unitText: settings.speedUnits.rawValue),
-                        fontName: "Helvetica-Bold",
-                        fontSize: max(24, gaugeSize * 0.13),
-                        color: NSColor.white,
-                        canvasSize: speedTextFrame.size
-                    ) ?? firstSpeedImage
-                    speedImagesByValue[value] = image
-                    return image
-                }
-
-                let textAnimation = CAKeyframeAnimation(keyPath: "contents")
-                textAnimation.values = speedImages
-                textAnimation.keyTimes = keyTimes
-                textAnimation.duration = clipDuration
-                textAnimation.beginTime = AVCoreAnimationBeginTimeAtZero
-                textAnimation.calculationMode = .discrete
-                textAnimation.isRemovedOnCompletion = false
-                textAnimation.fillMode = .forwards
-                speedTextLayer.add(textAnimation, forKey: "speedTextAnimation")
-            }
-        }
-
-        return gaugeLayer
     }
 
     private struct GaugeSample {
@@ -410,18 +301,398 @@ actor OverlayRenderService {
         return last.speed
     }
 
-    private func makeNeedlePath(
+    private func createRadialSpeedGaugeLayer(
+        size: CGSize,
+        settings: ExportSettings.OverlaySettings,
+        samples: [GaugeSample],
+        clipDuration: TimeInterval,
+        maxDisplaySpeed: Double,
+        fullCircle: Bool
+    ) -> CALayer {
+        let gaugeScale = max(0.6, min(2.0, settings.gaugeScale))
+        let gaugeSize: CGFloat = 220 * CGFloat(gaugeScale)
+        let position = calculatePosition(for: settings.gaugePosition, in: size, overlaySize: gaugeSize)
+        let center = CGPoint(x: gaugeSize / 2, y: gaugeSize / 2)
+        let radius = gaugeSize * 0.42
+
+        let gaugeLayer = CALayer()
+        gaugeLayer.frame = CGRect(x: position.x - gaugeSize / 2, y: position.y - gaugeSize / 2, width: gaugeSize, height: gaugeSize)
+        gaugeLayer.opacity = Float(settings.gaugeOpacity)
+
+        let panelLayer = CAShapeLayer()
+        panelLayer.path = CGPath(
+            ellipseIn: CGRect(
+                x: center.x - radius * 1.05,
+                y: center.y - radius * 1.05,
+                width: radius * 2.1,
+                height: radius * 2.1
+            ),
+            transform: nil
+        )
+        panelLayer.fillColor = NSColor.black.withAlphaComponent(0.35).cgColor
+        gaugeLayer.addSublayer(panelLayer)
+
+        let trackPath = makeGaugeArcPath(center: center, radius: radius * 0.82, fullCircle: fullCircle)
+
+        let trackLayer = CAShapeLayer()
+        trackLayer.path = trackPath
+        trackLayer.fillColor = NSColor.clear.cgColor
+        trackLayer.strokeColor = NSColor.white.withAlphaComponent(0.22).cgColor
+        trackLayer.lineWidth = max(8, gaugeSize * 0.04)
+        trackLayer.lineCap = .round
+        gaugeLayer.addSublayer(trackLayer)
+
+        let progressLayer = CAShapeLayer()
+        progressLayer.path = trackPath
+        progressLayer.fillColor = NSColor.clear.cgColor
+        progressLayer.strokeColor = NSColor.systemCyan.cgColor
+        progressLayer.lineWidth = trackLayer.lineWidth
+        progressLayer.lineCap = .round
+        progressLayer.shadowColor = NSColor.systemBlue.cgColor
+        progressLayer.shadowOpacity = 0.55
+        progressLayer.shadowRadius = 8
+        progressLayer.strokeEnd = 0
+        gaugeLayer.addSublayer(progressLayer)
+
+        let tickLayer = CAShapeLayer()
+        tickLayer.path = makeGaugeTicksPath(center: center, radius: radius * 0.82, fullCircle: fullCircle)
+        tickLayer.fillColor = NSColor.clear.cgColor
+        tickLayer.strokeColor = NSColor.white.withAlphaComponent(0.25).cgColor
+        tickLayer.lineWidth = max(1.5, gaugeSize * 0.008)
+        tickLayer.lineCap = .round
+        gaugeLayer.addSublayer(tickLayer)
+
+        let needleLayer = CAShapeLayer()
+        needleLayer.frame = gaugeLayer.bounds
+        needleLayer.fillColor = NSColor.clear.cgColor
+        needleLayer.strokeColor = NSColor.systemBlue.cgColor
+        needleLayer.lineWidth = max(4, gaugeSize * 0.03)
+        needleLayer.lineCap = .round
+        needleLayer.shadowColor = NSColor.systemBlue.cgColor
+        needleLayer.shadowOpacity = 0.45
+        needleLayer.shadowRadius = 4
+        gaugeLayer.addSublayer(needleLayer)
+
+        let hubLayer = CAShapeLayer()
+        let hubSize = max(12, gaugeSize * 0.06)
+        hubLayer.path = CGPath(
+            ellipseIn: CGRect(x: center.x - hubSize / 2, y: center.y - hubSize / 2, width: hubSize, height: hubSize),
+            transform: nil
+        )
+        hubLayer.fillColor = NSColor.white.cgColor
+        gaugeLayer.addSublayer(hubLayer)
+
+        let speedTextFrame = fullCircle
+            ? CGRect(x: 0, y: gaugeSize * 0.44, width: gaugeSize, height: gaugeSize * 0.2)
+            : CGRect(x: 0, y: gaugeSize * 0.62, width: gaugeSize, height: gaugeSize * 0.22)
+        let speedTextLayer = CALayer()
+        speedTextLayer.frame = speedTextFrame
+        speedTextLayer.contentsGravity = .center
+        speedTextLayer.contentsScale = 2.0
+        gaugeLayer.addSublayer(speedTextLayer)
+
+        guard let firstSample = samples.first else {
+            return gaugeLayer
+        }
+
+        let firstNormalized = normalizedSpeed(firstSample.displaySpeed, maxDisplaySpeed: maxDisplaySpeed)
+        progressLayer.strokeEnd = CGFloat(firstNormalized)
+        needleLayer.path = makeRadialNeedlePath(
+            speedValue: firstSample.displaySpeed,
+            maxSpeedValue: maxDisplaySpeed,
+            gaugeSize: gaugeSize,
+            fullCircle: fullCircle
+        )
+
+        let speedFontSize = max(22, gaugeSize * (fullCircle ? 0.11 : 0.13))
+        let firstSpeedImage = makeTextImage(
+            text: speedGaugeLabel(for: firstSample.displaySpeed, unitText: settings.speedUnits.rawValue),
+            fontName: "Helvetica-Bold",
+            fontSize: speedFontSize,
+            color: NSColor.white,
+            canvasSize: speedTextFrame.size
+        )
+        speedTextLayer.contents = firstSpeedImage
+
+        guard clipDuration > 0, samples.count > 1 else {
+            return gaugeLayer
+        }
+
+        let keyTimes = samples.map { NSNumber(value: $0.relativeTime / clipDuration) }
+        let needlePaths = samples.map {
+            makeRadialNeedlePath(
+                speedValue: $0.displaySpeed,
+                maxSpeedValue: maxDisplaySpeed,
+                gaugeSize: gaugeSize,
+                fullCircle: fullCircle
+            ) as Any
+        }
+        let normalizedValues = samples.map { NSNumber(value: normalizedSpeed($0.displaySpeed, maxDisplaySpeed: maxDisplaySpeed)) }
+
+        let progressAnimation = CAKeyframeAnimation(keyPath: "strokeEnd")
+        progressAnimation.values = normalizedValues
+        progressAnimation.keyTimes = keyTimes
+        progressAnimation.duration = clipDuration
+        progressAnimation.beginTime = AVCoreAnimationBeginTimeAtZero
+        progressAnimation.calculationMode = .linear
+        progressAnimation.isRemovedOnCompletion = false
+        progressAnimation.fillMode = .forwards
+        progressLayer.add(progressAnimation, forKey: "progressStrokeAnimation")
+
+        let needleAnimation = CAKeyframeAnimation(keyPath: "path")
+        needleAnimation.values = needlePaths
+        needleAnimation.keyTimes = keyTimes
+        needleAnimation.duration = clipDuration
+        needleAnimation.beginTime = AVCoreAnimationBeginTimeAtZero
+        needleAnimation.calculationMode = .linear
+        needleAnimation.isRemovedOnCompletion = false
+        needleAnimation.fillMode = .forwards
+        needleLayer.add(needleAnimation, forKey: "needlePathAnimation")
+
+        if let firstSpeedImage {
+            let speedValues = samples.map { Int($0.displaySpeed.rounded()) }
+            var speedImagesByValue: [Int: CGImage] = [:]
+            let speedImages = speedValues.map { value -> Any in
+                if let image = speedImagesByValue[value] {
+                    return image
+                }
+                let image = makeTextImage(
+                    text: speedGaugeLabel(for: Double(value), unitText: settings.speedUnits.rawValue),
+                    fontName: "Helvetica-Bold",
+                    fontSize: speedFontSize,
+                    color: NSColor.white,
+                    canvasSize: speedTextFrame.size
+                ) ?? firstSpeedImage
+                speedImagesByValue[value] = image
+                return image
+            }
+
+            let textAnimation = CAKeyframeAnimation(keyPath: "contents")
+            textAnimation.values = speedImages
+            textAnimation.keyTimes = keyTimes
+            textAnimation.duration = clipDuration
+            textAnimation.beginTime = AVCoreAnimationBeginTimeAtZero
+            textAnimation.calculationMode = .discrete
+            textAnimation.isRemovedOnCompletion = false
+            textAnimation.fillMode = .forwards
+            speedTextLayer.add(textAnimation, forKey: "speedTextAnimation")
+        }
+
+        return gaugeLayer
+    }
+
+    private func createLinearSpeedGaugeLayer(
+        size: CGSize,
+        settings: ExportSettings.OverlaySettings,
+        samples: [GaugeSample],
+        clipDuration: TimeInterval,
+        maxDisplaySpeed: Double
+    ) -> CALayer {
+        let gaugeScale = max(0.6, min(2.0, settings.gaugeScale))
+        let width: CGFloat = 320 * CGFloat(gaugeScale)
+        let height: CGFloat = 120 * CGFloat(gaugeScale)
+        let overlaySize = max(width, height)
+        let position = calculatePosition(for: settings.gaugePosition, in: size, overlaySize: overlaySize)
+
+        let gaugeLayer = CALayer()
+        gaugeLayer.frame = CGRect(x: position.x - width / 2, y: position.y - height / 2, width: width, height: height)
+        gaugeLayer.opacity = Float(settings.gaugeOpacity)
+
+        let panelLayer = CAShapeLayer()
+        panelLayer.path = CGPath(roundedRect: gaugeLayer.bounds, cornerWidth: height * 0.2, cornerHeight: height * 0.2, transform: nil)
+        panelLayer.fillColor = NSColor.black.withAlphaComponent(0.4).cgColor
+        gaugeLayer.addSublayer(panelLayer)
+
+        let speedTextFrame = CGRect(x: width * 0.06, y: height * 0.1, width: width * 0.88, height: height * 0.36)
+        let speedTextLayer = CALayer()
+        speedTextLayer.frame = speedTextFrame
+        speedTextLayer.contentsGravity = .center
+        speedTextLayer.contentsScale = 2.0
+        gaugeLayer.addSublayer(speedTextLayer)
+
+        let trackFrame = CGRect(
+            x: width * 0.08,
+            y: height * 0.62,
+            width: width * 0.84,
+            height: max(10, height * 0.16)
+        )
+        let cornerRadius = trackFrame.height / 2
+
+        let trackBgLayer = CAShapeLayer()
+        trackBgLayer.path = CGPath(roundedRect: trackFrame, cornerWidth: cornerRadius, cornerHeight: cornerRadius, transform: nil)
+        trackBgLayer.fillColor = NSColor.white.withAlphaComponent(0.18).cgColor
+        gaugeLayer.addSublayer(trackBgLayer)
+
+        let fillMaskLayer = CAShapeLayer()
+        let firstSample = samples.first ?? GaugeSample(relativeTime: 0, displaySpeed: 0)
+        let firstNormalized = normalizedSpeed(firstSample.displaySpeed, maxDisplaySpeed: maxDisplaySpeed)
+        fillMaskLayer.path = linearFillPath(trackFrame: trackFrame, cornerRadius: cornerRadius, normalized: firstNormalized)
+
+        let fillGradient = CAGradientLayer()
+        fillGradient.frame = gaugeLayer.bounds
+        fillGradient.colors = [
+            NSColor.systemCyan.cgColor,
+            NSColor.systemBlue.cgColor,
+            NSColor.systemPurple.cgColor
+        ]
+        fillGradient.locations = [0, 0.6, 1]
+        fillGradient.startPoint = CGPoint(x: 0, y: 0.5)
+        fillGradient.endPoint = CGPoint(x: 1, y: 0.5)
+        fillGradient.mask = fillMaskLayer
+        gaugeLayer.addSublayer(fillGradient)
+
+        let thumbLayer = CALayer()
+        let thumbSize = trackFrame.height * 1.15
+        thumbLayer.frame = CGRect(x: 0, y: 0, width: thumbSize, height: thumbSize)
+        thumbLayer.cornerRadius = thumbSize / 2
+        thumbLayer.backgroundColor = NSColor.white.cgColor
+        thumbLayer.shadowColor = NSColor.systemBlue.cgColor
+        thumbLayer.shadowOpacity = 0.5
+        thumbLayer.shadowRadius = 6
+        thumbLayer.position = CGPoint(
+            x: trackFrame.minX + trackFrame.width * CGFloat(firstNormalized),
+            y: trackFrame.midY
+        )
+        gaugeLayer.addSublayer(thumbLayer)
+
+        let speedFontSize = max(20, height * 0.22)
+        let firstSpeedImage = makeTextImage(
+            text: speedGaugeLabel(for: firstSample.displaySpeed, unitText: settings.speedUnits.rawValue),
+            fontName: "Helvetica-Bold",
+            fontSize: speedFontSize,
+            color: NSColor.white,
+            canvasSize: speedTextFrame.size
+        )
+        speedTextLayer.contents = firstSpeedImage
+
+        guard clipDuration > 0, samples.count > 1 else {
+            return gaugeLayer
+        }
+
+        let keyTimes = samples.map { NSNumber(value: $0.relativeTime / clipDuration) }
+        let normalizedValues = samples.map { normalizedSpeed($0.displaySpeed, maxDisplaySpeed: maxDisplaySpeed) }
+        let fillPaths = normalizedValues.map { linearFillPath(trackFrame: trackFrame, cornerRadius: cornerRadius, normalized: $0) as Any }
+        let thumbPositions = normalizedValues.map {
+            NSValue(
+                point: CGPoint(
+                    x: trackFrame.minX + trackFrame.width * CGFloat($0),
+                    y: trackFrame.midY
+                )
+            )
+        }
+
+        let fillAnimation = CAKeyframeAnimation(keyPath: "path")
+        fillAnimation.values = fillPaths
+        fillAnimation.keyTimes = keyTimes
+        fillAnimation.duration = clipDuration
+        fillAnimation.beginTime = AVCoreAnimationBeginTimeAtZero
+        fillAnimation.calculationMode = .linear
+        fillAnimation.isRemovedOnCompletion = false
+        fillAnimation.fillMode = .forwards
+        fillMaskLayer.add(fillAnimation, forKey: "linearFillAnimation")
+
+        let thumbAnimation = CAKeyframeAnimation(keyPath: "position")
+        thumbAnimation.values = thumbPositions
+        thumbAnimation.keyTimes = keyTimes
+        thumbAnimation.duration = clipDuration
+        thumbAnimation.beginTime = AVCoreAnimationBeginTimeAtZero
+        thumbAnimation.calculationMode = .linear
+        thumbAnimation.isRemovedOnCompletion = false
+        thumbAnimation.fillMode = .forwards
+        thumbLayer.add(thumbAnimation, forKey: "linearThumbAnimation")
+
+        if let firstSpeedImage {
+            let speedValues = samples.map { Int($0.displaySpeed.rounded()) }
+            var speedImagesByValue: [Int: CGImage] = [:]
+            let speedImages = speedValues.map { value -> Any in
+                if let image = speedImagesByValue[value] {
+                    return image
+                }
+                let image = makeTextImage(
+                    text: speedGaugeLabel(for: Double(value), unitText: settings.speedUnits.rawValue),
+                    fontName: "Helvetica-Bold",
+                    fontSize: speedFontSize,
+                    color: NSColor.white,
+                    canvasSize: speedTextFrame.size
+                ) ?? firstSpeedImage
+                speedImagesByValue[value] = image
+                return image
+            }
+
+            let textAnimation = CAKeyframeAnimation(keyPath: "contents")
+            textAnimation.values = speedImages
+            textAnimation.keyTimes = keyTimes
+            textAnimation.duration = clipDuration
+            textAnimation.beginTime = AVCoreAnimationBeginTimeAtZero
+            textAnimation.calculationMode = .discrete
+            textAnimation.isRemovedOnCompletion = false
+            textAnimation.fillMode = .forwards
+            speedTextLayer.add(textAnimation, forKey: "linearSpeedTextAnimation")
+        }
+
+        return gaugeLayer
+    }
+
+    private func makeGaugeArcPath(center: CGPoint, radius: CGFloat, fullCircle: Bool) -> CGPath {
+        let path = CGMutablePath()
+        if fullCircle {
+            path.addArc(center: center, radius: radius, startAngle: -CGFloat.pi / 2, endAngle: (3 * CGFloat.pi) / 2, clockwise: false)
+        } else {
+            path.addArc(center: center, radius: radius, startAngle: CGFloat.pi, endAngle: 0, clockwise: false)
+        }
+        return path
+    }
+
+    private func makeGaugeTicksPath(center: CGPoint, radius: CGFloat, fullCircle: Bool) -> CGPath {
+        let path = CGMutablePath()
+        let tickCount = fullCircle ? 24 : 12
+        for idx in 0...tickCount {
+            let ratio = Double(idx) / Double(max(tickCount, 1))
+            let angle: CGFloat
+            if fullCircle {
+                angle = (-CGFloat.pi / 2) + (CGFloat(ratio) * 2 * CGFloat.pi)
+            } else {
+                angle = CGFloat.pi - (CGFloat(ratio) * CGFloat.pi)
+            }
+
+            let longTick = idx % (fullCircle ? 4 : 3) == 0
+            let outer = radius * 1.03
+            let inner = radius * (longTick ? 0.85 : 0.9)
+            let start = CGPoint(x: center.x + cos(angle) * inner, y: center.y + sin(angle) * inner)
+            let end = CGPoint(x: center.x + cos(angle) * outer, y: center.y + sin(angle) * outer)
+            path.move(to: start)
+            path.addLine(to: end)
+        }
+        return path
+    }
+
+    private func linearFillPath(trackFrame: CGRect, cornerRadius: CGFloat, normalized: Double) -> CGPath {
+        let width = max(2, trackFrame.width * CGFloat(min(max(normalized, 0), 1)))
+        let fillRect = CGRect(x: trackFrame.minX, y: trackFrame.minY, width: width, height: trackFrame.height)
+        return CGPath(
+            roundedRect: fillRect,
+            cornerWidth: cornerRadius,
+            cornerHeight: cornerRadius,
+            transform: nil
+        )
+    }
+
+    private func makeRadialNeedlePath(
         speedValue: Double,
         maxSpeedValue: Double,
-        gaugeSize: CGFloat
+        gaugeSize: CGFloat,
+        fullCircle: Bool
     ) -> CGPath {
         let center = CGPoint(x: gaugeSize / 2, y: gaugeSize / 2)
         let radius = gaugeSize * 0.42
-        let normalized = min(max(speedValue / max(maxSpeedValue, 1), 0), 1)
-        let angle = CGFloat.pi - CGFloat(normalized) * CGFloat.pi
+        let normalized = CGFloat(normalizedSpeed(speedValue, maxDisplaySpeed: maxSpeedValue))
+        let angle = fullCircle
+            ? (-CGFloat.pi / 2) + (normalized * 2 * CGFloat.pi)
+            : CGFloat.pi - (normalized * CGFloat.pi)
+        let needleLength = fullCircle ? radius * 0.78 : radius * 0.72
         let endPoint = CGPoint(
-            x: center.x + cos(angle) * radius * 0.72,
-            y: center.y + sin(angle) * radius * 0.72
+            x: center.x + cos(angle) * needleLength,
+            y: center.y + sin(angle) * needleLength
         )
 
         let path = CGMutablePath()
@@ -432,6 +703,10 @@ actor OverlayRenderService {
 
     private func speedGaugeLabel(for speed: Double, unitText: String) -> String {
         "\(Int(speed.rounded())) \(unitText)"
+    }
+
+    private func normalizedSpeed(_ speedValue: Double, maxDisplaySpeed: Double) -> Double {
+        min(max(speedValue / max(maxDisplaySpeed, 1), 0), 1)
     }
 
     // MARK: - Date/Time Layer
