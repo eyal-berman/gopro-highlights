@@ -13,16 +13,18 @@ import CoreMedia
 actor VideoStitchService {
     private var currentExportSession: AVAssetExportSession?
 
-    struct SegmentFile {
+    struct SegmentFile: Sendable {
         let url: URL
         let originalVideoName: String
         let durationSeconds: TimeInterval
         let sourceCaptureDate: Date?
         let segmentStartTime: TimeInterval
         let kind: SegmentKind
+        let pisteName: String?
+        let resortName: String?
     }
 
-    enum SegmentKind {
+    enum SegmentKind: Sendable {
         case highlight
         case maxSpeed
     }
@@ -191,7 +193,7 @@ actor VideoStitchService {
         let progressTask = Task { [self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
-                let exportProgress = await currentExportProgress() * 0.7 // 70% of total progress
+                let exportProgress = currentExportProgress() * 0.7 // 70% of total progress
                 onProgress(progressOffset + exportProgress)
             }
         }
@@ -227,7 +229,7 @@ actor VideoStitchService {
         await currentExportSession?.export()
     }
 
-    private func cancelCurrentExport() {
+    private func cancelCurrentExport() async {
         currentExportSession?.cancelExport()
     }
 
@@ -249,6 +251,7 @@ actor VideoStitchService {
         baseVideoName: String,
         segmentCount: Int,
         totalDurationSeconds: TimeInterval,
+        locationToken: String? = nil,
         format: ExportSettings.OutputSettings.VideoFormat
     ) -> String {
         let baseName = (baseVideoName as NSString).deletingPathExtension
@@ -261,6 +264,9 @@ actor VideoStitchService {
         let formatter = DateFormatter()
         formatter.dateFormat = "HHmmss"
         let timestamp = formatter.string(from: Date())
+        if let locationToken, !locationToken.isEmpty {
+            return "\(baseName)_Stitched_\(durationLabel)_\(segmentCount)clips_\(locationToken)_\(timestamp).\(format.fileExtension)"
+        }
         return "\(baseName)_Stitched_\(durationLabel)_\(segmentCount)clips_\(timestamp).\(format.fileExtension)"
     }
 }

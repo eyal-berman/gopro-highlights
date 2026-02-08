@@ -37,8 +37,10 @@ actor CSVExportService {
             "Filename",
             "Max Speed (km/h)",
             "Max Speed Time",
+            "Max Speed Timestamp (s)",
             "Avg Speed (km/h)",
             "Highlights Count",
+            "Highlight Timestamps (s)",
             "Duration (s)",
             "File Size (MB)"
         ]
@@ -62,8 +64,10 @@ actor CSVExportService {
         if let stats = video.speedStats {
             values.append(String(format: "%.1f", stats.maxSpeed))
             values.append(formatTimestamp(stats.maxSpeedTime))
+            values.append(String(format: "%.2f", max(0, stats.maxSpeedTime)))
             values.append(String(format: "%.1f", stats.avgSpeed))
         } else {
+            values.append("N/A")
             values.append("N/A")
             values.append("N/A")
             values.append("N/A")
@@ -71,6 +75,7 @@ actor CSVExportService {
 
         // Highlights count
         values.append("\(video.highlights.count)")
+        values.append(highlightTimestampsCSVValue(video.highlights))
 
         // Duration
         values.append(String(format: "%.1f", video.duration))
@@ -108,6 +113,15 @@ actor CSVExportService {
         let minutes = (Int(seconds) % 3600) / 60
         let secs = Int(seconds) % 60
         return String(format: "%02d:%02d:%02d", hours, minutes, secs)
+    }
+
+    private func highlightTimestampsCSVValue(_ highlights: [Highlight]) -> String {
+        guard !highlights.isEmpty else { return "N/A" }
+        let joined = highlights
+            .sorted { $0.timestamp < $1.timestamp }
+            .map { String(format: "%.2f", max(0, $0.timestamp)) }
+            .joined(separator: ";")
+        return escapeCSVField(joined)
     }
 
 }

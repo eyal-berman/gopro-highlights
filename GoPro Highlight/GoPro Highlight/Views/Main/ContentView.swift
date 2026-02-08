@@ -6,16 +6,20 @@
 //
 
 import SwiftUI
+import AppKit
+import UniformTypeIdentifiers
 
 struct ContentView: View {
     @State private var viewModel = VideoProcessorViewModel()
     @State private var settingsViewModel = SettingsViewModel()
     @State private var selectedTab: Tab = .videos
+    @State private var showBugReportSheet = false
 
     enum Tab {
         case videos
         case settings
         case processing
+        case help
     }
 
     var body: some View {
@@ -30,6 +34,9 @@ struct ContentView: View {
 
                 Label("Processing", systemImage: "waveform.circle")
                     .tag(Tab.processing)
+
+                Label("Help", systemImage: "questionmark.circle")
+                    .tag(Tab.help)
             }
             .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 250)
         } detail: {
@@ -42,6 +49,8 @@ struct ContentView: View {
                     SettingsTabView(settingsViewModel: settingsViewModel, mainViewModel: viewModel)
                 case .processing:
                     ProcessingTabView(viewModel: viewModel)
+                case .help:
+                    HelpTabView(openBugReporter: { showBugReportSheet = true })
                 }
             }
         }
@@ -50,6 +59,34 @@ struct ContentView: View {
         }
         .onChange(of: settingsViewModel.settings) {
             viewModel.settings = settingsViewModel.settings
+        }
+        .onChange(of: viewModel.isAwaitingPreProcessingDecision) { _, isAwaiting in
+            if isAwaiting {
+                selectedTab = .processing
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .openHelpCenter)) { _ in
+            selectedTab = .help
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .openBugReporter)) { _ in
+            selectedTab = .help
+            showBugReportSheet = true
+        }
+        .sheet(
+            isPresented: Binding(
+                get: { viewModel.isAwaitingPreProcessingDecision },
+                set: { isPresented in
+                    if !isPresented && viewModel.isAwaitingPreProcessingDecision {
+                        viewModel.cancelPreProcessingDecision()
+                    }
+                }
+            )
+        ) {
+            PreProcessingReviewSheet(viewModel: viewModel)
+                .interactiveDismissDisabled()
+        }
+        .sheet(isPresented: $showBugReportSheet) {
+            BugReportSheet(viewModel: viewModel)
         }
         .alert("Error", isPresented: $viewModel.showError) {
             Button("OK") {
@@ -80,12 +117,14 @@ struct VideosTabView: View {
                         Label("Clear", systemImage: "trash")
                     }
                     .buttonStyle(.borderless)
+                    .disabled(viewModel.isProcessing)
                 }
 
                 Button(action: { viewModel.selectFolder() }) {
                     Label("Select Folder", systemImage: "folder")
                 }
                 .buttonStyle(.borderedProminent)
+                .disabled(viewModel.isProcessing)
             }
             .padding()
             .background(Color(nsColor: .controlBackgroundColor))
@@ -125,6 +164,7 @@ struct EmptyStateView: View {
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
+            .disabled(viewModel.isProcessing)
         }
         .padding()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -263,6 +303,13 @@ struct SettingsTabView: View {
                     .padding(.horizontal)
                     .padding(.top)
 
+                if mainViewModel.isProcessing {
+                    Label("Settings are locked while processing is running.", systemImage: "lock.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .padding(.horizontal)
+                }
+
                 VStack(spacing: 16) {
                     SettingsSection(title: "Highlight Extraction", icon: "star.fill") {
                         HighlightSettingsView(settings: $settingsViewModel.settings.highlightSettings)
@@ -288,6 +335,7 @@ struct SettingsTabView: View {
             settingsViewModel.saveSettings()
             mainViewModel.settings = settingsViewModel.settings
         }
+        .disabled(mainViewModel.isProcessing)
     }
 }
 
@@ -408,6 +456,320 @@ struct ProcessingProgressView: View {
     }
 }
 
+// MARK: - Help Tab
+struct HelpTabView: View {
+    let openBugReporter: () -> Void
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("How To Use Each Feature")
+                    .font(.title)
+                    .fontWeight(.bold)
+
+                HelpFeatureSection(
+                    title: "1. Load Videos",
+                    icon: "folder",
+                    steps: [
+                        "Open the Videos tab and click Select Folder.",
+                        "Pick a folder that contains your GoPro MP4 or MOV files.",
+                        "Confirm the loaded files and statuses in the list."
+                    ]
+                )
+
+                HelpFeatureSection(
+                    title: "2. Highlight Extraction",
+                    icon: "star.fill",
+                    steps: [
+                        "In Settings, set seconds before and after each highlight.",
+                        "Enable merge overlapping if you want fewer, longer clips.",
+                        "Start processing to create highlight segments."
+                    ]
+                )
+
+                HelpFeatureSection(
+                    title: "3. Max Speed Videos",
+                    icon: "speedometer",
+                    steps: [
+                        "Enable Extract max speed videos.",
+                        "Set Top N to choose how many fastest source videos to export.",
+                        "Set timing before and after peak speed."
+                    ]
+                )
+
+                HelpFeatureSection(
+                    title: "4. Overlays",
+                    icon: "square.stack.3d.up",
+                    steps: [
+                        "Enable speed gauge, date/time, and optional piste details.",
+                        "Adjust style, size, position, and opacity.",
+                        "Enable per-feature include overlay toggles to render overlays on export."
+                    ]
+                )
+
+                HelpFeatureSection(
+                    title: "5. Export Options",
+                    icon: "square.and.arrow.up",
+                    steps: [
+                        "Choose quality and output format.",
+                        "Select output mode: individual, stitched, or both.",
+                        "Optionally choose a dedicated output directory."
+                    ]
+                )
+
+                HelpFeatureSection(
+                    title: "6. Processing and Results",
+                    icon: "waveform.circle",
+                    steps: [
+                        "Click Start Processing in the Videos tab.",
+                        "Monitor progress and logs in the Processing tab.",
+                        "Review exported clips, stitched output, and CSV report in the output folder."
+                    ]
+                )
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Need Help?")
+                        .font(.headline)
+                    Text("If processing fails or output looks wrong, send a bug report with diagnostics.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button(action: openBugReporter) {
+                        Label("Report a Bug", systemImage: "ladybug")
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+                .padding()
+                .background(Color(nsColor: .controlBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+            }
+            .padding()
+        }
+    }
+}
+
+struct HelpFeatureSection: View {
+    let title: String
+    let icon: String
+    let steps: [String]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label(title, systemImage: icon)
+                .font(.headline)
+            ForEach(Array(steps.enumerated()), id: \.offset) { entry in
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "checkmark.circle")
+                        .foregroundStyle(.green)
+                        .font(.caption)
+                        .padding(.top, 2)
+                    Text(entry.element)
+                        .font(.body)
+                }
+            }
+        }
+        .padding()
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+}
+
+// MARK: - Pre-Processing Review Sheet
+struct PreProcessingReviewSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let viewModel: VideoProcessorViewModel
+    @State private var selectedQuality: ExportSettings.OutputSettings.ExportQuality = .high
+
+    var body: some View {
+        Group {
+            if let summary = viewModel.preProcessingSummary,
+               let estimate = viewModel.preProcessingEstimate(for: selectedQuality) {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("Pre-Processing Review")
+                        .font(.title2)
+                        .fontWeight(.bold)
+
+                    Text("Found \(summary.moviesWithHighlights) movies with highlights out of \(summary.totalMovies) movies. Total clip time is \(formatDuration(summary.totalClipDurationSeconds)).")
+                        .font(.body)
+
+                    Text("Estimated file size for standalone files / stitched file / total created files:")
+                        .font(.headline)
+
+                    Text("\(VideoProcessorViewModel.formatBytes(estimate.standaloneBytes)) / \(VideoProcessorViewModel.formatBytes(estimate.stitchedBytes)) / \(VideoProcessorViewModel.formatBytes(estimate.totalOutputBytes))")
+                        .font(.body)
+
+                    Text("Estimated output files: \(estimate.outputFileCount)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Text(viewModel.preProcessingEncodingDescription(for: selectedQuality))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if !summary.anyOverlayLayerEnabled {
+                        Text("No overlay layers are enabled, so passthrough can apply on eligible original-quality clips.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Text("Planned max-speed output clips: \(summary.plannedMaxSpeedClipCount) (Top \(summary.requestedMaxSpeedTopN), candidate videos: \(summary.maxSpeedCandidateCount)).")
+                        .font(.headline)
+                    Text("Estimated max-speed clip length: \(formatDuration(summary.maxSpeedClipDurationSeconds)) each.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("Pre-processing is highlights-first: piste detection and detailed max-speed ranking run only after you continue.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Divider()
+
+                    HStack {
+                        Text("Quality:")
+                        Picker("Quality", selection: $selectedQuality) {
+                            ForEach(ExportSettings.OutputSettings.ExportQuality.allCases, id: \.self) { quality in
+                                let fitText = viewModel.preProcessingHasEnoughDiskSpace(for: quality) ? "fits" : "no space"
+                                Text("\(quality.rawValue) (\(fitText))").tag(quality)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                    }
+
+                    if let recommended = summary.recommendedQuality {
+                        Text("Recommended quality based on free space: \(recommended.rawValue)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    HStack {
+                        Text("Estimated processing time: \(formatDuration(estimate.estimatedProcessingTimeSeconds))")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        if let available = summary.availableDiskBytes {
+                            Text("Free space: \(VideoProcessorViewModel.formatBytes(available))")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    if !viewModel.preProcessingHasEnoughDiskSpace(for: selectedQuality) {
+                        Label("Not enough free space for selected quality. Choose a lower quality or free disk space.", systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    }
+
+                    HStack {
+                        Button("Exit Now") {
+                            viewModel.cancelPreProcessingDecision()
+                            dismiss()
+                        }
+                        Spacer()
+                        Button("Continue Processing") {
+                            viewModel.continuePreProcessing(with: selectedQuality)
+                            dismiss()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(!viewModel.preProcessingHasEnoughDiskSpace(for: selectedQuality))
+                    }
+                }
+                .padding(20)
+                .frame(minWidth: 760, minHeight: 560)
+                .onAppear {
+                    selectedQuality = summary.recommendedQuality ?? summary.defaultQuality
+                }
+            } else {
+                VStack(spacing: 12) {
+                    ProgressView()
+                    Text("Preparing pre-processing review...")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(minWidth: 480, minHeight: 200)
+                .padding()
+            }
+        }
+    }
+
+    private func formatDuration(_ seconds: TimeInterval) -> String {
+        let total = Int(max(0, seconds).rounded())
+        let hours = total / 3600
+        let minutes = (total % 3600) / 60
+        let secs = total % 60
+        if hours > 0 {
+            return String(format: "%02d:%02d:%02d", hours, minutes, secs)
+        }
+        return String(format: "%02d:%02d", minutes, secs)
+    }
+}
+
+// MARK: - Bug Report Sheet
+struct BugReportSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let viewModel: VideoProcessorViewModel
+    @State private var issueDescription = ""
+    @State private var statusMessage = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Report a Bug")
+                .font(.title2)
+                .fontWeight(.bold)
+
+            Text("Describe what happened. Diagnostics and recent logs will be included automatically.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            TextEditor(text: $issueDescription)
+                .frame(minHeight: 140)
+                .padding(6)
+                .background(Color(nsColor: .textBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+
+            HStack {
+                Button("Copy Report") {
+                    let report = viewModel.buildBugReport(userDescription: issueDescription)
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(report, forType: .string)
+                    statusMessage = "Bug report copied to clipboard."
+                }
+
+                Button("Save Report...") {
+                    let panel = NSSavePanel()
+                    panel.title = "Save Bug Report"
+                    panel.allowedContentTypes = [.plainText]
+                    panel.canCreateDirectories = true
+                    let formatter = DateFormatter()
+                    formatter.dateFormat = "yyyyMMdd_HHmmss"
+                    panel.nameFieldStringValue = "GoProHighlight_BugReport_\(formatter.string(from: Date())).txt"
+
+                    guard panel.runModal() == .OK, let url = panel.url else { return }
+
+                    do {
+                        let report = viewModel.buildBugReport(userDescription: issueDescription)
+                        try report.write(to: url, atomically: true, encoding: .utf8)
+                        statusMessage = "Saved bug report to \(url.lastPathComponent)."
+                    } catch {
+                        statusMessage = "Failed to save bug report: \(error.localizedDescription)"
+                    }
+                }
+
+                Spacer()
+
+                Button("Close") {
+                    dismiss()
+                }
+                .keyboardShortcut(.cancelAction)
+            }
+
+            if !statusMessage.isEmpty {
+                Text(statusMessage)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(20)
+        .frame(minWidth: 620, minHeight: 360)
+    }
+}
+
 // MARK: - Log Entry View
 struct LogEntryView: View {
     let entry: ProcessingProgress.LogEntry
@@ -469,6 +831,11 @@ struct LogEntryView: View {
         default: return Color(nsColor: .controlBackgroundColor)
         }
     }
+}
+
+extension Notification.Name {
+    static let openHelpCenter = Notification.Name("GoProHighlight.OpenHelpCenter")
+    static let openBugReporter = Notification.Name("GoProHighlight.OpenBugReporter")
 }
 
 #Preview {

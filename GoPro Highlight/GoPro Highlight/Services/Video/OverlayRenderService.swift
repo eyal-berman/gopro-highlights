@@ -943,7 +943,7 @@ actor OverlayRenderService {
         let progressTask = Task { [self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
-                let progress = await currentExportProgress()
+                let progress = currentExportProgress()
                 await MainActor.run {
                     onProgress(progress)
                 }
@@ -977,7 +977,7 @@ actor OverlayRenderService {
         await currentExportSession?.export()
     }
 
-    private func cancelCurrentExport() {
+    private func cancelCurrentExport() async {
         currentExportSession?.cancelExport()
     }
 

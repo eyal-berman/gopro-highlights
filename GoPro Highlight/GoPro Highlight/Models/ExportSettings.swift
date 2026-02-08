@@ -189,6 +189,9 @@ struct ExportSettings: Codable, Sendable, Equatable {
         var format: VideoFormat = .mp4
         var outputMode: OutputMode = .individual
         var outputDirectory: URL?
+        var outputDirectoryBookmarkData: Data?
+        var preferPassthroughWhenNoOverlays: Bool = true
+        var includePisteInFilenames: Bool = false
 
         enum ExportQuality: String, Codable, CaseIterable, Sendable {
             case original = "Original Quality"
@@ -207,7 +210,7 @@ struct ExportSettings: Codable, Sendable, Equatable {
 
             var description: String {
                 switch self {
-                case .original: return "Keep original quality (fastest)"
+                case .original: return "Re-encode at highest quality (keeps dimensions, not bit-exact source)"
                 case .high: return "1920x1080, ~10 Mbps"
                 case .medium: return "1280x720, ~5 Mbps"
                 case .low: return "960x540, ~2.5 Mbps"
@@ -231,6 +234,97 @@ struct ExportSettings: Codable, Sendable, Equatable {
             case individual = "Individual Clips"
             case stitched = "Single Stitched Video"
             case both = "Both Individual & Stitched"
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case quality
+            case format
+            case outputMode
+            case outputDirectory
+            case outputDirectoryBookmarkData
+            case preferPassthroughWhenNoOverlays
+            case includePisteInFilenames
+        }
+
+        init() {}
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            quality = try container.decodeIfPresent(ExportQuality.self, forKey: .quality) ?? .high
+            _ = try container.decodeIfPresent(VideoFormat.self, forKey: .format)
+            format = .mp4
+            outputMode = try container.decodeIfPresent(OutputMode.self, forKey: .outputMode) ?? .individual
+            outputDirectory = try container.decodeIfPresent(URL.self, forKey: .outputDirectory)
+            outputDirectoryBookmarkData = try container.decodeIfPresent(Data.self, forKey: .outputDirectoryBookmarkData)
+            preferPassthroughWhenNoOverlays = try container.decodeIfPresent(Bool.self, forKey: .preferPassthroughWhenNoOverlays) ?? true
+            includePisteInFilenames = try container.decodeIfPresent(Bool.self, forKey: .includePisteInFilenames) ?? false
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(quality, forKey: .quality)
+            try container.encode(format, forKey: .format)
+            try container.encode(outputMode, forKey: .outputMode)
+            try container.encodeIfPresent(outputDirectory, forKey: .outputDirectory)
+            try container.encodeIfPresent(outputDirectoryBookmarkData, forKey: .outputDirectoryBookmarkData)
+            try container.encode(preferPassthroughWhenNoOverlays, forKey: .preferPassthroughWhenNoOverlays)
+            try container.encode(includePisteInFilenames, forKey: .includePisteInFilenames)
+        }
+
+        var shouldAttemptPassthrough: Bool {
+            quality == .original && preferPassthroughWhenNoOverlays
+        }
+
+        @discardableResult
+        mutating func setOutputDirectory(_ url: URL?) -> Bool {
+            outputDirectory = url
+
+            guard let url else {
+                outputDirectoryBookmarkData = nil
+                return true
+            }
+
+            do {
+                outputDirectoryBookmarkData = try url.bookmarkData(
+                    options: [.withSecurityScope],
+                    includingResourceValuesForKeys: nil,
+                    relativeTo: nil
+                )
+                return true
+            } catch {
+                outputDirectoryBookmarkData = nil
+                return false
+            }
+        }
+
+        mutating func ensureSecurityScopedBookmark() {
+            guard outputDirectoryBookmarkData == nil, let outputDirectory else { return }
+            _ = setOutputDirectory(outputDirectory)
+        }
+
+        mutating func resolveOutputDirectory() -> URL? {
+            guard let bookmarkData = outputDirectoryBookmarkData else {
+                return outputDirectory
+            }
+
+            var isStale = false
+            do {
+                let resolvedURL = try URL(
+                    resolvingBookmarkData: bookmarkData,
+                    options: [.withSecurityScope],
+                    relativeTo: nil,
+                    bookmarkDataIsStale: &isStale
+                )
+                outputDirectory = resolvedURL
+
+                if isStale {
+                    _ = setOutputDirectory(resolvedURL)
+                }
+
+                return resolvedURL
+            } catch {
+                return outputDirectory
+            }
         }
     }
 }

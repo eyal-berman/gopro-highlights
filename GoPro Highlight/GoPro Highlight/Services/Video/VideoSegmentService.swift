@@ -13,6 +13,16 @@ import CoreMedia
 actor VideoSegmentService {
     private var currentExportSession: AVAssetExportSession?
 
+    enum SegmentEncodingMode: Sendable {
+        case passthrough
+        case reencoded
+    }
+
+    struct SegmentExportResult: Sendable {
+        let mode: SegmentEncodingMode
+        let fallbackReason: String?
+    }
+
     // MARK: - Video Segment Model
     struct VideoSegment {
         let startTime: TimeInterval
@@ -113,8 +123,9 @@ actor VideoSegmentService {
         segment: VideoSegment,
         outputURL: URL,
         quality: ExportSettings.OutputSettings.ExportQuality,
+        preferPassthrough: Bool = false,
         onProgress: @escaping (Double) -> Void = { _ in }
-    ) async throws {
+    ) async throws -> SegmentExportResult {
         let asset = AVAsset(url: videoURL)
 
         // Verify asset is readable
@@ -122,10 +133,57 @@ actor VideoSegmentService {
             throw VideoError.assetNotReadable
         }
 
-        // Create composition
+        let timeRange = CMTimeRange(
+            start: CMTime(seconds: segment.startTime, preferredTimescale: 600),
+            duration: CMTime(seconds: segment.duration, preferredTimescale: 600)
+        )
+
+        if preferPassthrough {
+            do {
+                try await exportAsset(
+                    asset,
+                    to: outputURL,
+                    presetName: AVAssetExportPresetPassthrough,
+                    timeRange: timeRange,
+                    onProgress: onProgress
+                )
+                return SegmentExportResult(mode: .passthrough, fallbackReason: nil)
+            } catch {
+                if error is CancellationError {
+                    throw error
+                }
+
+                let fallbackReason = "Passthrough unavailable (\(error.localizedDescription)); re-encoding with selected quality."
+                try await exportSegmentViaComposition(
+                    asset: asset,
+                    timeRange: timeRange,
+                    outputURL: outputURL,
+                    quality: quality,
+                    onProgress: onProgress
+                )
+                return SegmentExportResult(mode: .reencoded, fallbackReason: fallbackReason)
+            }
+        }
+
+        try await exportSegmentViaComposition(
+            asset: asset,
+            timeRange: timeRange,
+            outputURL: outputURL,
+            quality: quality,
+            onProgress: onProgress
+        )
+        return SegmentExportResult(mode: .reencoded, fallbackReason: nil)
+    }
+
+    private func exportSegmentViaComposition(
+        asset: AVAsset,
+        timeRange: CMTimeRange,
+        outputURL: URL,
+        quality: ExportSettings.OutputSettings.ExportQuality,
+        onProgress: @escaping (Double) -> Void
+    ) async throws {
         let composition = AVMutableComposition()
 
-        // Add video track
         if let videoTrack = try await asset.loadTracks(withMediaType: .video).first {
             guard let compositionVideoTrack = composition.addMutableTrack(
                 withMediaType: .video,
@@ -133,11 +191,6 @@ actor VideoSegmentService {
             ) else {
                 throw VideoError.trackCreationFailed
             }
-
-            let timeRange = CMTimeRange(
-                start: CMTime(seconds: segment.startTime, preferredTimescale: 600),
-                duration: CMTime(seconds: segment.duration, preferredTimescale: 600)
-            )
 
             try compositionVideoTrack.insertTimeRange(
                 timeRange,
@@ -160,11 +213,6 @@ actor VideoSegmentService {
                 throw VideoError.trackCreationFailed
             }
 
-            let timeRange = CMTimeRange(
-                start: CMTime(seconds: segment.startTime, preferredTimescale: 600),
-                duration: CMTime(seconds: segment.duration, preferredTimescale: 600)
-            )
-
             try compositionAudioTrack.insertTimeRange(
                 timeRange,
                 of: audioTrack,
@@ -172,20 +220,22 @@ actor VideoSegmentService {
             )
         }
 
-        // Export
-        try await exportComposition(
+        let presetName = quality == .original ? AVAssetExportPresetHighestQuality : quality.avPreset
+        try await exportAsset(
             composition,
             to: outputURL,
-            quality: quality,
+            presetName: presetName,
+            timeRange: nil,
             onProgress: onProgress
         )
     }
 
-    /// Exports a composition to file
-    private func exportComposition(
-        _ composition: AVMutableComposition,
+    /// Exports an asset to file
+    private func exportAsset(
+        _ asset: AVAsset,
         to outputURL: URL,
-        quality: ExportSettings.OutputSettings.ExportQuality,
+        presetName: String,
+        timeRange: CMTimeRange?,
         onProgress: @escaping (Double) -> Void
     ) async throws {
         // Remove existing file if it exists
@@ -193,17 +243,18 @@ actor VideoSegmentService {
             try FileManager.default.removeItem(at: outputURL)
         }
 
-        // Passthrough does not reliably handle composed timelines.
-        let presetName = quality == .original ? AVAssetExportPresetHighestQuality : quality.avPreset
-
         // Create export session
         guard let exportSession = AVAssetExportSession(
-            asset: composition,
+            asset: asset,
             presetName: presetName
         ) else {
             throw VideoError.exportSessionCreationFailed
         }
         currentExportSession = exportSession
+
+        if let timeRange {
+            exportSession.timeRange = timeRange
+        }
 
         exportSession.outputURL = outputURL
         let preferredFileType = preferredOutputFileType(for: outputURL)
@@ -220,7 +271,7 @@ actor VideoSegmentService {
         let progressTask = Task { [self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
-                let progress = await currentExportProgress()
+                let progress = currentExportProgress()
                 onProgress(progress)
             }
         }
@@ -254,7 +305,7 @@ actor VideoSegmentService {
         await currentExportSession?.export()
     }
 
-    private func cancelCurrentExport() {
+    private func cancelCurrentExport() async {
         currentExportSession?.cancelExport()
     }
 

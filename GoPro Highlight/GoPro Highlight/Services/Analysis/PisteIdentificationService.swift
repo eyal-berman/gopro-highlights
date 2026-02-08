@@ -18,13 +18,39 @@ actor PisteIdentificationService {
         let confidence: Double   // 0.0 to 1.0
     }
 
+    struct Metrics {
+        let identifyRequests: Int
+        let nearbyCacheHits: Int
+        let nearbyInflightJoins: Int
+        let resortCacheHits: Int
+        let resortInflightJoins: Int
+        let nearbyLogicalQueries: Int
+        let resortLogicalQueries: Int
+        let httpAttempts: Int
+        let httpSuccesses: Int
+    }
+
     private let osmService = OpenStreetMapService()
     private var pisteCache: [String: [OpenStreetMapService.PisteData]] = [:]
     private var resortCache: [String: String] = [:]
+    private var pisteRequestsInFlight: [String: Task<[OpenStreetMapService.PisteData], Error>] = [:]
+    private var resortRequestsInFlight: [String: Task<String?, Error>] = [:]
+    private var identifyRequests = 0
+    private var nearbyCacheHits = 0
+    private var nearbyInflightJoins = 0
+    private var resortCacheHits = 0
+    private var resortInflightJoins = 0
+    private var overpassUnavailableUntil: Date?
+    private let overpassCooldownSeconds: TimeInterval = 30
 
     /// Identifies which ski piste a video was recorded on based on GPS telemetry
     func identifyPiste(from telemetry: Telemetry) async throws -> PisteInfo? {
+        identifyRequests += 1
         guard !telemetry.gpsPoints.isEmpty else {
+            return nil
+        }
+
+        if let unavailableUntil = overpassUnavailableUntil, unavailableUntil > Date() {
             return nil
         }
 
@@ -34,16 +60,19 @@ actor PisteIdentificationService {
         let cacheKey = makeCacheKey(latitude: centerPoint.latitude, longitude: centerPoint.longitude, radiusMeters: searchRadius)
 
         let pistes: [OpenStreetMapService.PisteData]
-        if let cached = pisteCache[cacheKey] {
-            pistes = cached
-        } else {
-            let queried = try await osmService.queryNearbyPistes(
+        do {
+            pistes = try await nearbyPistes(
+                cacheKey: cacheKey,
                 centerLat: centerPoint.latitude,
                 centerLon: centerPoint.longitude,
                 radiusMeters: searchRadius
             )
-            pisteCache[cacheKey] = queried
-            pistes = queried
+            overpassUnavailableUntil = nil
+        } catch OSMError.networkUnavailable {
+            overpassUnavailableUntil = Date().addingTimeInterval(overpassCooldownSeconds)
+            return nil
+        } catch {
+            throw error
         }
 
         guard !pistes.isEmpty else {
@@ -75,12 +104,12 @@ actor PisteIdentificationService {
                     resort: cachedResort,
                     confidence: match.confidence
                 )
-            } else if let nearestResort = try? await osmService.queryNearestResortName(
+            } else if let nearestResort = try? await nearestResortName(
+                cacheKey: cacheKey,
                 centerLat: centerPoint.latitude,
                 centerLon: centerPoint.longitude,
                 radiusMeters: 25000
             ) {
-                resortCache[cacheKey] = nearestResort
                 match = PisteInfo(
                     name: match.name,
                     difficulty: match.difficulty,
@@ -219,9 +248,101 @@ actor PisteIdentificationService {
     }
 
     private func makeCacheKey(latitude: Double, longitude: Double, radiusMeters: Double) -> String {
-        let latBucket = (latitude * 1000).rounded() / 1000
-        let lonBucket = (longitude * 1000).rounded() / 1000
+        // 0.01-degree buckets (~1.1km) are sufficient for a 5km search radius.
+        let latBucket = (latitude * 100).rounded() / 100
+        let lonBucket = (longitude * 100).rounded() / 100
         return "\(latBucket),\(lonBucket),r=\(Int(radiusMeters))"
+    }
+
+    private func nearbyPistes(
+        cacheKey: String,
+        centerLat: Double,
+        centerLon: Double,
+        radiusMeters: Double
+    ) async throws -> [OpenStreetMapService.PisteData] {
+        if let cached = pisteCache[cacheKey] {
+            nearbyCacheHits += 1
+            return cached
+        }
+
+        if let task = pisteRequestsInFlight[cacheKey] {
+            nearbyInflightJoins += 1
+            return try await task.value
+        }
+
+        let osm = osmService
+        let task = Task<[OpenStreetMapService.PisteData], Error> {
+            try await osm.queryNearbyPistes(
+                centerLat: centerLat,
+                centerLon: centerLon,
+                radiusMeters: radiusMeters
+            )
+        }
+
+        pisteRequestsInFlight[cacheKey] = task
+        do {
+            let pistes = try await task.value
+            pisteCache[cacheKey] = pistes
+            pisteRequestsInFlight[cacheKey] = nil
+            return pistes
+        } catch {
+            pisteRequestsInFlight[cacheKey] = nil
+            throw error
+        }
+    }
+
+    private func nearestResortName(
+        cacheKey: String,
+        centerLat: Double,
+        centerLon: Double,
+        radiusMeters: Double
+    ) async throws -> String? {
+        if let cached = resortCache[cacheKey] {
+            resortCacheHits += 1
+            return cached
+        }
+
+        if let task = resortRequestsInFlight[cacheKey] {
+            resortInflightJoins += 1
+            return try await task.value
+        }
+
+        let osm = osmService
+        let task = Task<String?, Error> {
+            try await osm.queryNearestResortName(
+                centerLat: centerLat,
+                centerLon: centerLon,
+                radiusMeters: radiusMeters
+            )
+        }
+
+        resortRequestsInFlight[cacheKey] = task
+        do {
+            let resort = try await task.value
+            if let resort {
+                resortCache[cacheKey] = resort
+            }
+            resortRequestsInFlight[cacheKey] = nil
+            return resort
+        } catch {
+            resortRequestsInFlight[cacheKey] = nil
+            throw error
+        }
+    }
+
+    func metricsSnapshot() async -> Metrics {
+        let osmMetrics = await osmService.metricsSnapshot()
+        return Metrics(
+            identifyRequests: identifyRequests,
+            nearbyCacheHits: nearbyCacheHits,
+            nearbyInflightJoins: nearbyInflightJoins,
+            resortCacheHits: resortCacheHits,
+            resortInflightJoins: resortInflightJoins,
+            nearbyLogicalQueries: osmMetrics.nearbyLogicalQueries,
+            resortLogicalQueries: osmMetrics.resortLogicalQueries,
+            httpAttempts: osmMetrics.httpAttempts,
+            httpSuccesses: osmMetrics.httpSuccesses
+        )
     }
 
     private func dominantResortName(in pistes: [OpenStreetMapService.PisteData]) -> String? {
@@ -263,6 +384,19 @@ actor OpenStreetMapService {
         "https://overpass.kumi.systems/api/interpreter",
         "https://overpass.openstreetmap.fr/api/interpreter"
     ]
+    private let overpassQueryTimeoutSeconds = 8
+    private let requestTimeoutSeconds: TimeInterval = 4
+    private var nearbyLogicalQueries = 0
+    private var resortLogicalQueries = 0
+    private var httpAttempts = 0
+    private var httpSuccesses = 0
+
+    struct Metrics {
+        let nearbyLogicalQueries: Int
+        let resortLogicalQueries: Int
+        let httpAttempts: Int
+        let httpSuccesses: Int
+    }
 
     /// Queries nearby ski pistes from OpenStreetMap
     func queryNearbyPistes(
@@ -270,18 +404,17 @@ actor OpenStreetMapService {
         centerLon: Double,
         radiusMeters: Double
     ) async throws -> [PisteData] {
+        nearbyLogicalQueries += 1
         // Construct Overpass QL query
         let query = """
-        [out:json][timeout:25];
+        [out:json][timeout:\(overpassQueryTimeoutSeconds)];
         (
           way["piste:type"="downhill"](around:\(radiusMeters),\(centerLat),\(centerLon));
           way["piste:type"="nordic"](around:\(radiusMeters),\(centerLat),\(centerLon));
           relation["piste:type"="downhill"](around:\(radiusMeters),\(centerLat),\(centerLon));
           relation["piste:type"="nordic"](around:\(radiusMeters),\(centerLat),\(centerLon));
         );
-        out body center;
-        >;
-        out skel qt;
+        out tags center;
         """
 
         let data = try await performOverpassQuery(query: query)
@@ -293,8 +426,9 @@ actor OpenStreetMapService {
         centerLon: Double,
         radiusMeters: Double
     ) async throws -> String? {
+        resortLogicalQueries += 1
         let query = """
-        [out:json][timeout:20];
+        [out:json][timeout:\(overpassQueryTimeoutSeconds)];
         (
           relation["tourism"="ski_resort"]["name"](around:\(radiusMeters),\(centerLat),\(centerLon));
           way["landuse"="winter_sports"]["name"](around:\(radiusMeters),\(centerLat),\(centerLon));
@@ -314,38 +448,61 @@ actor OpenStreetMapService {
 
     private func performOverpassQuery(query: String) async throws -> Data {
         var errors: [String] = []
+        let endpoints = overpassURLs
+        let timeout = requestTimeoutSeconds
+        let userAgent = "GoPro Highlight Processor"
+        httpAttempts += endpoints.count
 
-        for endpoint in overpassURLs {
-            var components = URLComponents(string: endpoint)
-            components?.queryItems = [URLQueryItem(name: "data", value: query)]
+        return try await withThrowingTaskGroup(of: (endpoint: String, data: Data?, error: String?).self) { group in
+            for endpoint in endpoints {
+                group.addTask {
+                    var components = URLComponents(string: endpoint)
+                    components?.queryItems = [URLQueryItem(name: "data", value: query)]
 
-            guard let url = components?.url else {
-                errors.append("\(endpoint): invalid URL")
-                continue
+                    guard let url = components?.url else {
+                        return (endpoint, nil, "invalid URL")
+                    }
+
+                    var request = URLRequest(url: url)
+                    request.httpMethod = "GET"
+                    request.timeoutInterval = timeout
+                    request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+
+                    do {
+                        let (data, response) = try await URLSession.shared.data(for: request)
+                        guard let httpResponse = response as? HTTPURLResponse else {
+                            return (endpoint, nil, "non-HTTP response")
+                        }
+                        guard httpResponse.statusCode == 200 else {
+                            return (endpoint, nil, "HTTP \(httpResponse.statusCode)")
+                        }
+                        return (endpoint, data, nil)
+                    } catch {
+                        return (endpoint, nil, error.localizedDescription)
+                    }
+                }
             }
 
-            var request = URLRequest(url: url)
-            request.httpMethod = "GET"
-            request.timeoutInterval = 20
-            request.setValue("GoPro Highlight Processor", forHTTPHeaderField: "User-Agent")
-
-            do {
-                let (data, response) = try await URLSession.shared.data(for: request)
-                guard let httpResponse = response as? HTTPURLResponse else {
-                    errors.append("\(endpoint): non-HTTP response")
-                    continue
+            while let result = try await group.next() {
+                if let data = result.data {
+                    httpSuccesses += 1
+                    group.cancelAll()
+                    return data
                 }
-                guard httpResponse.statusCode == 200 else {
-                    errors.append("\(endpoint): HTTP \(httpResponse.statusCode)")
-                    continue
-                }
-                return data
-            } catch {
-                errors.append("\(endpoint): \(error.localizedDescription)")
+                errors.append("\(result.endpoint): \(result.error ?? "unknown error")")
             }
+
+            throw OSMError.networkUnavailable(errors.joined(separator: " | "))
         }
+    }
 
-        throw OSMError.networkUnavailable(errors.joined(separator: " | "))
+    func metricsSnapshot() -> Metrics {
+        Metrics(
+            nearbyLogicalQueries: nearbyLogicalQueries,
+            resortLogicalQueries: resortLogicalQueries,
+            httpAttempts: httpAttempts,
+            httpSuccesses: httpSuccesses
+        )
     }
 
     /// Parses Overpass API JSON response

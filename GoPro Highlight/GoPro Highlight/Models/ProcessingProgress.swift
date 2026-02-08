@@ -25,6 +25,7 @@ class ProcessingProgress {
         case parsing = "Parsing Metadata"
         case analyzing = "Analyzing Speed Data"
         case identifyingPistes = "Identifying Ski Pistes"
+        case preProcessingReview = "Pre-Processing Review"
         case extracting = "Extracting Segments"
         case rendering = "Rendering Overlays"
         case stitching = "Stitching Videos"

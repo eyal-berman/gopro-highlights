@@ -27,8 +27,8 @@ actor GPMFParserService {
     }
 
     /// Finds highlight markers by parsing the MP4 box structure (moov/udta/GPMF)
-    func findHighlights(in videoURL: URL) throws -> [Highlight] {
-        return try extractHighlightsFromMP4(url: videoURL)
+    func findHighlights(in videoURL: URL) async throws -> [Highlight] {
+        return try await extractHighlightsFromMP4(url: videoURL)
     }
 
     // MARK: - GPMF Track Discovery
@@ -44,7 +44,7 @@ actor GPMFParserService {
             var hasGpmdSubtype = false
             var hasGoProHint = false
 
-            for case let desc as CMFormatDescription in formatDescriptions {
+            for desc in formatDescriptions {
                 let subType = CMFormatDescriptionGetMediaSubType(desc)
                 // 'gpmd' = 0x67706D64
                 if subType == 0x67706D64 || subType == 0x646D7067 {
@@ -156,7 +156,7 @@ actor GPMFParserService {
         var points: [RawGPSPoint] = []
         while let group = adaptor.nextTimedMetadataGroup() {
             for item in group.items {
-                guard let data = extractMetadataDataValue(from: item), !data.isEmpty else { continue }
+                guard let data = await extractMetadataDataValue(from: item), !data.isEmpty else { continue }
                 points.append(contentsOf: extractGPSPoints(fromSampleData: data))
             }
         }
@@ -164,17 +164,33 @@ actor GPMFParserService {
         return points
     }
 
-    private func extractMetadataDataValue(from item: AVMetadataItem) -> Data? {
-        if let data = item.dataValue {
-            return data
-        }
+    private func extractMetadataDataValue(from item: AVMetadataItem) async -> Data? {
+        if #available(macOS 13.0, *) {
+            if let data = try? await item.load(.dataValue) {
+                return data
+            }
 
-        if let data = item.value as? Data {
-            return data
-        }
+            if let value = try? await item.load(.value) {
+                if let data = value as? Data {
+                    return data
+                }
+                if let data = value as? NSData {
+                    return data as Data
+                }
+            }
+        } else {
+            if let data = item.dataValue {
+                return data
+            }
 
-        if let data = item.value as? NSData {
-            return data as Data
+            if let value = item.value {
+                if let data = value as? Data {
+                    return data
+                }
+                if let data = value as? NSData {
+                    return data as Data
+                }
+            }
         }
 
         return nil
@@ -1212,7 +1228,7 @@ actor GPMFParserService {
         }
     }
 
-    private func extractHighlightsFromMP4(url: URL) throws -> [Highlight] {
+    private func extractHighlightsFromMP4(url: URL) async throws -> [Highlight] {
         guard let handle = try? FileHandle(forReadingFrom: url) else {
             throw GPMFError.openFailed
         }
@@ -1241,15 +1257,19 @@ actor GPMFParserService {
 
         if let gpmf = udtaChildren.first(where: { $0.typeString == "GPMF" }) {
             let timestampsMs = parseHighlightsGPMF(handle: handle, start: gpmf.dataStart, end: gpmf.end)
-            return timestampsMs.map { ms in
-                Highlight(timestamp: Double(ms) / 1000.0, type: .manual)
+            return await MainActor.run {
+                timestampsMs.map { ms in
+                    Highlight(timestamp: Double(ms) / 1000.0, type: .manual)
+                }
             }
         }
 
         if let hmmt = udtaChildren.first(where: { $0.typeString == "HMMT" }) {
             let timestampsMs = parseHighlightsHMMT(handle: handle, start: hmmt.dataStart, end: hmmt.end)
-            return timestampsMs.map { ms in
-                Highlight(timestamp: Double(ms) / 1000.0, type: .manual)
+            return await MainActor.run {
+                timestampsMs.map { ms in
+                    Highlight(timestamp: Double(ms) / 1000.0, type: .manual)
+                }
             }
         }
 

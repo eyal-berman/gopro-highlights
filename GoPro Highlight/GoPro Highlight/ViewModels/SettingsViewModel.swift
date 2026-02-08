@@ -18,6 +18,11 @@ class SettingsViewModel {
         // Load settings from UserDefaults or use defaults
         if let savedSettings = Self.loadSettings() {
             self.settings = savedSettings
+            let hadBookmark = self.settings.outputSettings.outputDirectoryBookmarkData != nil
+            self.settings.outputSettings.ensureSecurityScopedBookmark()
+            if !hadBookmark && self.settings.outputSettings.outputDirectoryBookmarkData != nil {
+                saveSettings()
+            }
         } else {
             self.settings = ExportSettings()
         }
@@ -91,7 +96,7 @@ class SettingsViewModel {
         // Video extraction: depends on quality
         switch settings.outputSettings.quality {
         case .original:
-            multiplier += 0.5  // Fast, just copying
+            multiplier += settings.outputSettings.preferPassthroughWhenNoOverlays ? 0.35 : 0.5
         case .high:
             multiplier += 1.5  // Re-encoding at high quality
         case .medium:
